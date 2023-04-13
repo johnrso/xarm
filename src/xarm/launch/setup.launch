@@ -1,0 +1,13 @@
+<launch>
+
+  <include file="$(find xarm)/launch/rs_rgbd.launch"/>
+
+  <!-- TODO: this will be used for both train tiome and demo collection time -->
+  <node name="rviz"
+        pkg="rviz" type="rviz"
+        clear_params="true"
+        args="-d $(find xarm)/rviz/setup.rviz">
+  </node>
+  <node pkg="tf" type="static_transform_publisher" name="marker_id_broadcaster" args="0.068 0.011 0.026 0.628 0.005 0.778 -0.002 link7 wrist_camera_link 100"/>
+
+</launch>

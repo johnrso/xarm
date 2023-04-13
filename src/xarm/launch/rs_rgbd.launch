@@ -1,0 +1,41 @@
+<launch>
+
+  <arg name="robot_ip" default="192.168.1.226" />
+  
+  <include file="$(find realsense2_camera)/launch/rs_rgbd.launch">
+    <arg name="camera" value="base_camera" />
+    <arg name="serial_no" value="034422072522"/>
+  </include>
+
+  <include file="$(find realsense2_camera)/launch/rs_rgbd.launch">
+  <arg name="camera" value="wrist_camera" />
+    <arg name="serial_no" value="926522070785" />
+  </include>
+
+<!--   <include file="$(find xarm7_gripper_moveit_config)/launch/realMove_exec.launch"> -->
+  <include file="$(find xarm)/launch/control.launch">
+    <arg name="robot_ip" value="$(arg robot_ip)" />
+    <arg name="show_rviz" value="false" />
+  </include>
+
+  <!-- <node name="marker_6dof"
+        pkg="jsk_interactive_marker" type="marker_6dof"
+        clear_params="true">
+    <rosparam subst_value="true">
+      frame_id: link_base  # parent
+      tf_frame: camera_link  # child
+      object_type: cube
+      publish_tf: true
+      tf_duration: 0.01  # 100Hz
+      object_x: 0.1
+      object_y: 0.1
+      object_z: 0.1
+      initial_x: 0.455
+      initial_y: 0.476
+      initial_z: 0.668
+      initial_orientation: [0.305, 0.314, -0.602, 0.668]
+    </rosparam>
+  </node> -->
+
+
+</launch>

@@ -1,0 +1,7 @@
+empy
+catkin_pkg
+scikit-robot
+pyspacemouse
+click
+rospkg
+defusedxml
