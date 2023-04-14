@@ -8,8 +8,6 @@ from gdict.data import GDict
 
 import skrobot
 import torch
-import torchvision.transforms as transforms
-from einops import rearrange
 
 import cv_bridge
 import message_filters
@@ -18,10 +16,12 @@ import tf
 import tf.transformations as ttf
 
 from sensor_msgs.msg import CameraInfo, Image, JointState
+from std_msgs.msg import Bool
 
 import time
 
-import xarm_ws.src.xarm.scripts.utils.robot_utils as robot_utils
+from utils.conversion_utils import compute_forward_action, preproc_obs, Pose, to_torch
+from utils import robot_utils
 import click
 import wandb
 
@@ -29,11 +29,17 @@ from omegaconf import OmegaConf
 
 class Agent:
     def __init__(self,
-                 policy):
+                 policy,
+                 scaled_actions,
+                 ee_control):
+        
+        self.scaled_actions = scaled_actions
+        self.ee_control = ee_control
+        self.policy = policy
 
         self.vid = []
         self.all_vid = []
-
+        
         self.num_iter = 0
 
         # policy setup
@@ -51,6 +57,13 @@ class Agent:
         self._robot.angle_vector(self._ri.angle_vector())
     
     def _setup_listeners(self):
+        self._obs = {}
+        self._obs['rgb'] = []
+        self._obs['depth'] = []
+        self._obs['camera_poses'] = []
+        self._obs['K_matrices'] = []
+        self._obs['state'] = []
+        
         self._tf_listener = tf.listener.TransformListener(cache_time=rospy.Duration(30))
 
         self._tf_listener.waitForTransform(
@@ -164,14 +177,19 @@ class Agent:
         quaternion = np.array(quaternion)[[3, 0, 1, 2]]
         p_ee_in_link0 = np.concatenate([position, quaternion]) # wxyz quaternion
 
-        self._obs = dict(
-            stamp=caminfo_msg_wrist.header.stamp,
-            rgb=rgb_wrist,
-            depth=depth_wrist,
-            state=p_ee_in_link0,
-            camera_poses=T_camera_in_link0,
-            K_matrices=K_wrist,
-        )
+        # keep a running queue of self.policy.encoder.num_frames observations
+        T = self.policy.encoder.num_frames
+        self._obs['rgb'].append(rgb_wrist)
+        self._obs['depth'].append(depth_wrist)
+        self._obs['state'].append(p_ee_in_link0)
+        self._obs['camera_poses'].append(T_camera_in_link0)
+        self._obs['K_matrices'].append(K_wrist)
+
+        self._obs['rgb'] = self._obs['rgb'][-T:]
+        self._obs['depth'] = self._obs['depth'][-T:]
+        self._obs['state'] = self._obs['state'][-T:]
+        self._obs['camera_poses'] = self._obs['camera_poses'][-T:]
+        self._obs['K_matrices'] = self._obs['K_matrices'][-T:]
 
     def record_video(self, rgb_msg_wrist, rgb_msg_base):
         rospy.loginfo_once(f"recording video")
@@ -191,45 +209,23 @@ class Agent:
         self.vid.append(vid_frame)
         self.all_vid.append(vid_frame)
 
-    def get_obs(
-        self,
-        stamp: rospy.Time,
-        is_first: bool = False,
-    ):
+    def get_obs(self):
         while not self._obs:
             rospy.sleep(0.001)
         assert self._obs is not None
-        obs_copy = self._obs.copy()
 
-        # crop to square
-        obs_copy["rgb"] = torch.as_tensor(obs_copy["rgb"], device=self.device).unsqueeze(0)
-        obs_copy["rgb"] = rearrange(obs_copy["rgb"], 'b h w c -> b c h w')
+        rgb = np.array(self._obs["rgb"]).transpose(0, 3, 1, 2)
+        depth = np.array(self._obs["depth"])
+        state = np.array(self._obs["state"])
+        camera_poses = np.array(self._obs["camera_poses"])
+        K_matrices = np.array(self._obs["K_matrices"])
 
-        obs_copy['camera_poses'] = torch.as_tensor(obs_copy['camera_poses'], device=self.device).unsqueeze(0)
+        obs = preproc_obs(rgb, depth, camera_poses, K_matrices, state)
 
-        H, W = obs_copy['rgb'].shape[2:]
-        sq_size = min(H, W)
+        for k in obs:
+            obs[k] = to_torch(obs[k], device=self.policy.device).float().unsqueeze(0)
 
-        temp_rgb = obs_copy['rgb']
-
-        temp_rgb = temp_rgb[:, :, :sq_size, :sq_size]
-        temp_rgb = transforms.Resize((224, 224),
-            interpolation = transforms.InterpolationMode.BILINEAR)(temp_rgb)
-
-        obs_copy['rgb'] = temp_rgb
-        temp_depth = torch.as_tensor(obs_copy['depth'], device=self.device).unsqueeze(0).unsqueeze(0)
-
-        temp_depth = temp_depth[:, :sq_size, :sq_size]
-        temp_depth = transforms.Resize((224, 224),
-            interpolation = transforms.InterpolationMode.NEAREST)(temp_depth)
-        temp_depth[np.isnan(temp_depth.cpu())] = 0
-        obs_copy['depth'] = temp_depth
-
-        obs_copy["state"] = torch.as_tensor(obs_copy["state"], device=self.device).unsqueeze(0)
-        obs_copy['K_matrices'] = torch.as_tensor(obs_copy['K_matrices'], device=self.device).unsqueeze(0)
-
-        del obs_copy["stamp"]
-        return obs_copy
+        return obs
 
     def reset(self):
         ret = self._reset()
@@ -240,8 +236,6 @@ class Agent:
 
     def _reset(self):
         robot_utils.recover_xarm_from_error()
-        if self.agent is not None:
-            self.agent.reset()
         self._gripper_action_prev = 1  # open
 
         self._ri.ungrasp()
@@ -252,10 +246,9 @@ class Agent:
         self._ri.wait_interpolation()
 
         self._ri.grasp()
-        obs = self.get_obs(rospy.Time.now(), is_first=True)
+        obs = self.get_obs()
         self.vid = []
 
-        print(f"reset!")
         return obs
 
     def step(self, action):
@@ -270,9 +263,10 @@ class Agent:
             self._gripper_action_prev = gripper_action
 
 
-        curr_obs = self.get_obs(rospy.Time.now(), is_first=False)
-        p_ee_in_link0 = curr_obs["state"]
+        curr_obs = self.get_obs()
+        p_ee_in_link0 = curr_obs["state"][-1, -1, :] # last element of [B, frame, proprio]
         T_ee_in_link0 = self.control_to_target_coords(control, p_ee_in_link0)
+        print(T_ee_in_link0)
         target_coords = skrobot.coordinates.Coordinates(
             pos=T_ee_in_link0[:3, 3], rot=T_ee_in_link0[:3, :3]
         )
@@ -282,22 +276,13 @@ class Agent:
         if ik_fail:
             raise RuntimeError("IK failed. reset")
 
-        if not (self.dry or ik_fail):
-            if not self.use_mouse:
-                self._ri.angle_vector(self._robot.angle_vector(), time=.5)
-                self._ri.wait_interpolation()
-            else:
-                self._ri.angle_vector(self._robot.angle_vector(), time=.5)
-        return self.get_obs(rospy.Time.now(), is_first=False)
+        if not ik_fail:
+            self._ri.angle_vector(self._robot.angle_vector(), time=.5)
+        return self.get_obs()
 
     def act(self, obs):
-        if self.traj is not None:
-            action = torch.as_tensor(next(self.traj), device=self.device).unsqueeze(0)
-        elif self.agent is not None:
-            with torch.no_grad():
-                action = self.agent.act(obs)
-        else:
-            raise NotImplementedError
+        with torch.no_grad():
+            action = self.policy(obs)
 
         act = {}
         act["control"] = action[:, :7]
@@ -312,26 +297,12 @@ class Agent:
         p_ee_in_link0 = p_ee_in_link0.clone().to(control.device)
         p_ee_in_link0 = p_ee_in_link0.squeeze(0).cpu().numpy()
         control = control.squeeze(0).cpu().numpy()
+        pose_ee = Pose(*p_ee_in_link0)
+        control_pose = Pose(*control)
 
-        pos = p_ee_in_link0[:3]
-        quat = p_ee_in_link0[3:]
+        final_pose = compute_forward_action(pose_ee, control_pose, ee_control=self.ee_control, scaled_actions=self.scaled_actions)
 
-        delta_pos = control[:3]
-
-        if self.scaled_actions:
-            delta_pos = delta_pos * 0.1
-            delta_quat = control[3:]
-        delta_quat = delta_quat / np.linalg.norm(delta_quat) # normalize quaternion to unit quaternion
-
-        pose_ee = Pose(pos, quat)
-        control_pose = Pose(delta_pos, delta_quat)
-
-        if self.ee_frame_control:
-            final_pose = pose_ee * control_pose
-        else:
-            final_pose = control_pose * pose_ee
-
-        return final_pose.to_transformation_matrix()
+        return final_pose.to_44_matrix()
 
     def save_vid(self):
         # save self.vid to wandb. it is a list of images
@@ -341,18 +312,10 @@ class Agent:
             print('discarding trial because it is too short')
             return
 
-        if self.interactive:
-            k = input('(s)ave or (d)iscard trial: ')
-        else:
-            k = 's'
-
-        if k == 's':
-            vid = vid.transpose(0, 3, 1, 2)
-            wandb.log({"video": wandb.Video(vid[::4], fps=30, format="mp4")}, step=self.num_iter)
-            self.vid = []
-            self.num_iter += 1
-        else:
-            print('discarding trial by user choice')
+        vid = vid.transpose(0, 3, 1, 2)
+        wandb.log({"video": wandb.Video(vid[::4], fps=30, format="mp4")}, step=self.num_iter)
+        self.vid = []
+        self.num_iter += 1
 
     def close(self):
         self.save_vid()
@@ -365,20 +328,44 @@ class Agent:
         self._ri.ungrasp()
 
 @click.command()
-@click.option("--config", "-c", type=str, default="agent config from agent training")
-@click.option("--ckpt", "-a", type=str, default=None)
-def main(config, ckpt):
+@click.option("--train_config", "-c", type=str, default="agent config from agent training")
+@click.option("--conv_config", "-d", type=str, default="dataset config from conversion")
+@click.option("--pol_ckpt", "-a", type=str, default=None)
+def main(train_config, conv_config, pol_ckpt):
     from simple_bc._interfaces.encoder import Encoder
     from simple_bc._interfaces.policy import Policy
 
-    config = OmegaConf.load(config)
-    
-    assert ckpt is not None, "ckpt is required"
-    encoder = Encoder.load_encoder(config.encoder)
-    policy = Policy.load_policy(encoder, config.policy)
-    policy.load_state_dict(torch.load(ckpt))
+    train_config = OmegaConf.load(train_config)
+    assert pol_ckpt is not None, "ckpt is required"
+    encoder = Encoder.load_encoder(train_config.encoder.value)
+    policy = Policy.load_policy(encoder, train_config.policy.value)
+    policy.load_state_dict(torch.load(pol_ckpt))
+    policy.to(policy.device)
 
-    agent = Agent(policy, )
+    conv_config = OmegaConf.load(conv_config)
+    scaled_actions = conv_config.scaled_actions
+    ee_control = conv_config.ee_control
+    proprio = train_config.train_dataset.value.aug_cfg.use_proprio
+
+    agent = Agent(policy, scaled_actions, ee_control)
+
+    wandb.init(project="simple-bc", name="test")
+    
+    r = rospy.Rate(5)
+    control_pub = rospy.Publisher("/control/status", Bool, queue_size=1)
+    while True:
+        obs = agent.reset()
+        while not rospy.is_shutdown():
+            try:
+                action = agent.act(obs)
+                obs = agent.step(action)
+                control_pub.publish(True)
+                r.sleep()
+            except RuntimeError as e:
+                agent.save_vid()
+                break
+        # input("Press enter to continue...")
+
 
 if __name__ == "__main__":
     main()

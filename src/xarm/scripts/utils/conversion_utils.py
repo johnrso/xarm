@@ -1,4 +1,4 @@
-from gdict.data import GDict
+import numpy as np
 import torch
 import torchvision.transforms as T
 import numpy as np
@@ -23,17 +23,17 @@ def preproc_obs(rgb, depth, camera_poses, K_matrices, state):
         T.Resize((224, 224), T.InterpolationMode.BILINEAR, antialias=None),
     ])
 
-    _, H, W = rgb.shape
+    H, W = rgb.shape[-2:]
     sq_size = min(H, W)
 
     rgb_t = to_torch(rgb, device='cuda')
-    rgb_t = rgb_t[:, :sq_size, :sq_size] # TODO: left crop?
+    rgb_t = rgb_t[..., :sq_size, :sq_size] # TODO: left crop?
     rgb_t = image_transform(rgb_t)
     rgb = to_numpy(rgb_t)
 
     depth_t = to_torch(depth, device='cuda')
-    depth_t = depth_t.view(1, *depth_t.shape)
-    depth_t = depth_t[:, :sq_size, :sq_size] # TODO: left crop?
+    depth_t = depth_t.unsqueeze(-3)
+    depth_t = depth_t[..., :sq_size, :sq_size] # TODO: left crop?
     depth_t = image_transform(depth_t)
     depth = to_numpy(depth_t)
 
@@ -75,6 +75,13 @@ class Pose(object):
     def to_numpy(self):
         return np.concatenate([self.p, self.q])
     
+    def to_44_matrix(self):
+        out = np.eye(4)
+        out[:3, :3] = ttf.quaternion_matrix(self.q)[:3, :3]
+        out[:3, 3] = self.p
+        return out
+    
+    
 def compute_inverse_action(p, p_new, ee_control=False, scaled_actions=False):
     assert isinstance(p, Pose) and isinstance(p_new, Pose)
     if ee_control:
@@ -91,6 +98,8 @@ def compute_forward_action(p, dpose, ee_control=False, scaled_actions=False):
     assert isinstance(p, Pose) and isinstance(dpose, Pose)
     if scaled_actions:
         dpose.p = dpose.p * 0.1
+
+    dpose.q = dpose.q / np.linalg.norm(dpose.q)
 
     if ee_control:
         p_new = p * dpose
