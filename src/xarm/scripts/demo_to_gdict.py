@@ -21,28 +21,29 @@
 import glob
 import os
 import pickle
+from tqdm import tqdm
 
-import yaml
-
-import torch
-from torchvision import transforms
 from natsort import natsorted
 import numpy as np
 import hydra
 
 from gdict.data import GDict, DictArray
-from utils.conversion_utils import preproc_obs
+from utils.conversion_utils import preproc_obs, Pose, compute_inverse_action
 
-def convert_single_demo(source_dir, i, output_dir, use_mouse=False, view="wrist", ee_frame_control=False, scaled_actions=False):
-    print(source_dir)
-    pkls = natsorted(glob.glob(os.path.join(source_dir, '**/*.pkl'), recursive=True))
+def convert_single_demo(source_dir, i, output_dir, ee_control=False, scaled_actions=False):
+    pkls = natsorted(glob.glob(os.path.join(source_dir, '**/*.pkl'), recursive=True), reverse=True)
     demo_stack = []
 
-    if len(pkls) <= 30:
+    view = "wrist" # TODO: support more views eventually
+    if len(pkls) <= 60:
         print(f"Skipping {source_dir} because it has less than 30 frames.")
+        return 0
 
+    # go through the demo in reverse order.
+    requested_control = None # this stores the requested pose of time t+1.
     for pkl in pkls:
-        # Load the demo.
+        curr_ts = {}
+        
         with open(pkl, 'rb') as f:
             demo = pickle.load(f)
 
@@ -57,72 +58,77 @@ def convert_single_demo(source_dir, i, output_dir, use_mouse=False, view="wrist"
                           camera_poses=T_camera_in_link0,
                           K_matrices=K,
                           state=p_ee_in_link0)
+        
+        curr_ts['obs'] = obs
 
-        if len(demo_stack) > 0:
-            prev_pose = demo_stack[-1][f'traj_{i}']['obs']['state']
-            curr_pose = demo_dict['obs']['state']
+        if requested_control is not None:
+            curr_pose = obs['state']
             gripper_state = demo.pop('gripper_state')
-            mouse_control = demo.pop('control')
 
             # Compute transform from previous state to current state.
-            pose = Pose(prev_pose[:3], prev_pose[3:])
+            cpose = Pose(*curr_pose)
+            rpose = Pose(*requested_control)
 
-            if use_mouse:
-                pose_new = Pose(mouse_control[:3], mouse_control[3:])
-            else:
-                pose_new = Pose(curr_pose[:3], curr_pose[3:])
+            action = compute_inverse_action(cpose, rpose, ee_control=ee_control, scaled_actions=scaled_actions) 
+            curr_ts['actions'] = np.concatenate([action.to_numpy(), [gripper_state]])
+        else:
+            # if this is the last frame, then we don't have a requested control. Just set it to the current pose.
+            action = np.zeros(8)
+            action[3] = 1.0
+            action[7] = demo.pop('gripper_state')
 
-            if ee_frame_control:
-                delta_pose = pose.inv() * pose_new
-            else:
-                delta_pose = pose_new * pose.inv()
+            curr_ts['actions'] = action
 
-            if scaled_actions:
+        requested_control = demo.pop('control')
+        curr_ts['dones'] = np.zeros(1) # random fill
+        curr_ts['episode_dones'] = np.zeros(1) # random fill
 
-                p = delta_pose.p / 0.1
-                q = delta_pose.q
-            else:
-                p = delta_pose.p
-                q = delta_pose.q
-            demo_stack[-1][f'traj_{i}']['actions'] = np.concatenate([p, q, [gripper_state]]) # store EE delta pose
-        demo_dict['dones'] = np.zeros(1) # random fill
-        demo_dict['episode_dones'] = np.zeros(1) # random fill
-
-        demo_dict_final = dict()
-        demo_dict_final[f'traj_{i}'] = demo_dict
-        demo_stack.append(demo_dict_final)
-
-    # Final action delta is identity; no change in EE pose. Gripper is same position as previous action.
-    final_action = np.zeros(8)
-    final_action[3] = 1.0
-    final_action[7] = demo_stack[-2][f'traj_{i}']['actions'][7]
-    demo_stack[-1][f'traj_{i}']['actions'] = final_action
+        curr_ts_wrapped = dict()
+        curr_ts_wrapped[f'traj_{i}'] = curr_ts
+        demo_stack.append(curr_ts_wrapped)
 
     # Save the demo.
     demo_dict = DictArray.stack(demo_stack)
-    print("Demo dict shape for verification:", demo_dict.shape)
     GDict.to_hdf5(demo_dict, os.path.join(output_dir + "", f'traj_{i}.h5'))
 
-    print(f"Finished converting demo trajectory {i}")
+    return 1
 
-@hydra.main(config_path='../config', config_name='data')
+@hydra.main(config_path='../conf/data', config_name='scaled_no_ee')
 def main(cfg):
-    subdirs = natsorted(glob.glob(os.path.join(args.source_dir, '*/'), recursive=True))
+    subdirs = natsorted(glob.glob(os.path.join(cfg.source_dir, '*/'), recursive=True))
 
-    if args.output_dir is None:
-        output_dir = args.source_dir
-        if output_dir[-1] == '/':
-            output_dir = output_dir[:-1]
+    output_dir = cfg.source_dir
+    if output_dir[-1] == '/':
+        output_dir = output_dir[:-1]
 
-        output_dir += "_" if not args.use_mouse else "_m"
-        output_dir += "_" + args.view[0]
-        output_dir += ("_e" if args.ee_frame_control else "")
-        output_dir += ("_s" if args.scaled_actions else "")
-    else:
-        output_dir = args.output_dir
+    output_dir += ("_e" if cfg.ee_control else "")
+    output_dir += ("_s" if cfg.scaled_actions else "")
 
     if not os.path.isdir(output_dir):
         os.mkdir(output_dir)
 
-    for i in range(len(subdirs)):
-        convert_single_demo(subdirs[i], i, output_dir=output_dir, use_mouse=args.use_mouse, view=args.view, ee_frame_control=args.ee_frame_control, scaled_actions=args.scaled_actions)
+    train_dir = os.path.join(output_dir, 't')
+    val_dir = os.path.join(output_dir, 'v')
+
+    if not os.path.isdir(train_dir):
+        os.mkdir(train_dir)
+    if not os.path.isdir(val_dir):
+        os.mkdir(val_dir)
+
+
+    val_indices = np.random.choice(len(subdirs), size=5, replace=False)
+    val_indices = set(val_indices)
+
+    print(f"Outputting to {output_dir}. (val indices: {val_indices}))")
+
+    pbar = tqdm(range(len(subdirs)))
+    tot = 0
+    for i in pbar:
+        out_dir = val_dir if i in val_indices else train_dir
+        tot += convert_single_demo(subdirs[i], i, output_dir=out_dir, ee_control=cfg.ee_control, scaled_actions=cfg.scaled_actions)
+        pbar.set_description(f"t: {i}")
+    
+    print(f"Finished converting all demos to {output_dir}! (num demos: {tot} / {len(subdirs)})")
+
+if __name__ == '__main__':
+    main()

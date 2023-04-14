@@ -34,6 +34,7 @@ class ObsRecorder:
         # check if the demo_dir exists. if not, create it
         self._demo_dir = Path(demo_dir)
         self._demo_dir.mkdir(parents=True, exist_ok=True)
+        self.len_traj = 0
 
         self._control_started_at = None
         self._control_ended_at = None
@@ -103,14 +104,17 @@ class ObsRecorder:
         while True:
             inp = input("d --> delete last recording\n")
             if inp == "d":
-                demo_dirs = sorted(os.listdir(self._demo_dir))
-                to_remove = self._demo_dir / demo_dirs[-1]
+                try:
+                    demo_dirs = sorted(os.listdir(self._demo_dir))
+                    to_remove = self._demo_dir / demo_dirs[-1]
 
-                # remove to_remove, and all files in it
-                import shutil
-                shutil.rmtree(to_remove, ignore_errors=True)
-                print("Removed", to_remove)
-                
+                    # remove to_remove, and all files in it
+                    import shutil
+                    shutil.rmtree(to_remove, ignore_errors=True)
+                    print("Removed", to_remove)
+                except:
+                    print("no recordings to remove.")
+
     def _demo_recording_callback(
         self,
         caminfo_msg_wrist,
@@ -214,8 +218,8 @@ class ObsRecorder:
                         ),
                         f
                     )
-
-                rospy.loginfo_throttle(5, "obs_recorder: recorded to %s", recorded_file)
+                self.len_traj += 1
+                print('\r', "traj len: ", str(self.len_traj), end = '')
         except Exception as e:
             pass
             self.reecording_pub.publish(True)
@@ -224,6 +228,7 @@ class ObsRecorder:
         # get the number of demos in self._demo_dir
         if msg.data and self._control_started_at is None:
             rospy.loginfo("obs_recorder: recording started")
+            self.len_traj = 0
             self._recorded_dir = self._demo_dir / datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
             self._recorded_dir.mkdir(parents=True, exist_ok=True)
             self._control_started_at = rospy.Time.now()

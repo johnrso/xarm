@@ -2,3 +2,8 @@ build/
 devel/
 log/
 .catkin_workspace
+*.pyc
+*__pycache__*
+*egg*
+*.egg-info
+outputs/

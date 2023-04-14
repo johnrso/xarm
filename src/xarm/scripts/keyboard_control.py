@@ -27,7 +27,7 @@ def main(rotation_mode, angle_scale, translation_scale, invert_control, control_
 class KeyboardControl:
     def __init__(self,
                 rotation_mode: str = "euler",
-                angle_scale: float = 0.05,
+                angle_scale: float = 0.1,
                 translation_scale: float = 0.02,
                 invert_control: bool = True,
                 control_hz: float = 5
@@ -207,7 +207,7 @@ class KeyboardControl:
             self._gripper_state = "open"
 
         self._robot.reset_pose()
-        self._ri.angle_vector(self._robot.angle_vector(), time=2)
+        self._ri.angle_vector(self._robot.angle_vector(), time=4)
         self._ri.wait_interpolation()
         self.delta_button = 0
 
