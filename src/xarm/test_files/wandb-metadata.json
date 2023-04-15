@@ -1,0 +1,257 @@
+{
+    "os": "Linux-5.15.0-69-generic-x86_64-with-glibc2.31",
+    "python": "3.9.0",
+    "heartbeatAt": "2023-04-14T22:07:13.691290",
+    "startedAt": "2023-04-14T22:07:13.171936",
+    "docker": null,
+    "cuda": null,
+    "args": [
+        "--config-name",
+        "conv_mlp_train",
+        "val_dataset=red_bag_hang",
+        "train_dataset=red_bag_hang",
+        "experiment=test_hang",
+        "epochs=300",
+        "seed=1"
+    ],
+    "state": "running",
+    "program": "/home/joso/internet-manipulation/scripts/train.py",
+    "codePath": "scripts/train.py",
+    "git": {
+        "remote": "git@github.com:johnrso/internet-manipulation.git",
+        "commit": "2598760161c925fd2596d516a081679dedd29636"
+    },
+    "email": "johnianrso@berkeley.edu",
+    "root": "/home/joso/internet-manipulation",
+    "host": "tyrion",
+    "username": "joso",
+    "executable": "/home/joso/miniconda3/envs/im/bin/python",
+    "cpu_count": 20,
+    "cpu_count_logical": 40,
+    "cpu_freq": {
+        "current": 1679.0017250000005,
+        "min": 1200.0,
+        "max": 3400.0
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 2700.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 2280.798,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 2878.206,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1300.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 2148.252,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 2100.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1434.082,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1600.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1300.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 3143.582,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 2300.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 3400.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1300.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 3400.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1300.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 3400.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 2373.36,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 3400.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1800.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1400.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1400.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1400.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1300.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1400.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 2496.202,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1200.0,
+            "min": 1200.0,
+            "max": 3400.0
+        },
+        {
+            "current": 1300.0,
+            "min": 1200.0,
+            "max": 3400.0
+        }
+    ],
+    "disk": {
+        "total": 227.67641830444336,
+        "used": 27.08816909790039
+    },
+    "gpu": "NVIDIA GeForce GTX 1080 Ti",
+    "gpu_count": 2,
+    "gpu_devices": [
+        {
+            "name": "NVIDIA GeForce GTX 1080 Ti",
+            "memory_total": 11811160064
+        },
+        {
+            "name": "NVIDIA TITAN Xp",
+            "memory_total": 12884901888
+        }
+    ],
+    "memory": {
+        "total": 110.02703857421875
+    }
+}

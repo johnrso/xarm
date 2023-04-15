@@ -24,6 +24,7 @@ from utils.conversion_utils import compute_forward_action, preproc_obs, Pose, to
 from utils import robot_utils
 import click
 import wandb
+import h5py
 
 from omegaconf import OmegaConf
 
@@ -31,15 +32,25 @@ class Agent:
     def __init__(self,
                  policy,
                  scaled_actions,
-                 ee_control):
-        
+                 ee_control,
+                 traj=None):
+
         self.scaled_actions = scaled_actions
         self.ee_control = ee_control
         self.policy = policy
 
+        if traj is None:
+            self.traj = None
+        else:
+            with open(traj, "rb") as f:
+                if traj is not None:
+                    traj = h5py.File(traj, "r")
+                    traj_id = list(self.traj.keys())[0]
+                    self.traj = iter(self.traj[traj_id]["dict_str_actions"])
+
         self.vid = []
         self.all_vid = []
-        
+
         self.num_iter = 0
 
         # policy setup
@@ -55,7 +66,7 @@ class Agent:
         self._ri = robot_utils.XArmROSRobotInterface(self._robot, namespace="")
         self._ri.update_robot_state()
         self._robot.angle_vector(self._ri.angle_vector())
-    
+
     def _setup_listeners(self):
         self._obs = {}
         self._obs['rgb'] = []
@@ -63,7 +74,7 @@ class Agent:
         self._obs['camera_poses'] = []
         self._obs['K_matrices'] = []
         self._obs['state'] = []
-        
+
         self._tf_listener = tf.listener.TransformListener(cache_time=rospy.Duration(30))
 
         self._tf_listener.waitForTransform(
@@ -72,7 +83,7 @@ class Agent:
             time=rospy.Time(0),
             timeout=rospy.Duration(10),
         )
-    
+
         self._sub_caminfo_wrist = message_filters.Subscriber(
             "/wrist_camera/aligned_depth_to_color/camera_info", CameraInfo
         )
@@ -266,7 +277,6 @@ class Agent:
         curr_obs = self.get_obs()
         p_ee_in_link0 = curr_obs["state"][-1, -1, :] # last element of [B, frame, proprio]
         T_ee_in_link0 = self.control_to_target_coords(control, p_ee_in_link0)
-        print(T_ee_in_link0)
         target_coords = skrobot.coordinates.Coordinates(
             pos=T_ee_in_link0[:3, 3], rot=T_ee_in_link0[:3, :3]
         )
@@ -281,8 +291,11 @@ class Agent:
         return self.get_obs()
 
     def act(self, obs):
-        with torch.no_grad():
-            action = self.policy(obs)
+        if self.traj is not None:
+            action = to_torch(self.traj, device=self.policy.device).float().unsqueeze(0)
+        else:
+            with torch.no_grad():
+                action = self.policy(obs)
 
         act = {}
         act["control"] = action[:, :7]
@@ -300,7 +313,10 @@ class Agent:
         pose_ee = Pose(*p_ee_in_link0)
         control_pose = Pose(*control)
 
-        final_pose = compute_forward_action(pose_ee, control_pose, ee_control=self.ee_control, scaled_actions=self.scaled_actions)
+        final_pose = compute_forward_action(pose_ee,
+                                            control_pose,
+                                            ee_control=self.ee_control,
+                                            scaled_actions=self.scaled_actions)
 
         return final_pose.to_44_matrix()
 
@@ -313,7 +329,15 @@ class Agent:
             return
 
         vid = vid.transpose(0, 3, 1, 2)
-        wandb.log({"video": wandb.Video(vid[::4], fps=30, format="mp4")}, step=self.num_iter)
+        success = input(f"last trial was a success? (y/n) ")
+        if success == 'y':
+            success = 1
+        else:
+            success = 0
+
+        wandb.log({"video": wandb.Video(vid[::4], fps=30, format="mp4"),
+                   "success": success}, step=self.num_iter)
+
         self.vid = []
         self.num_iter += 1
 
@@ -324,14 +348,16 @@ class Agent:
             all_vid = all_vid.transpose(0, 3, 1, 2)
             wandb.log({"all_video": wandb.Video(all_vid, fps=30, format="mp4")}, step=self.num_iter)
             print(f"saved all video at {self.num_iter}")
-        wandb.finish()
+
         self._ri.ungrasp()
+        wandb.finish()
 
 @click.command()
 @click.option("--train_config", "-c", type=str, default="agent config from agent training")
 @click.option("--conv_config", "-d", type=str, default="dataset config from conversion")
 @click.option("--pol_ckpt", "-a", type=str, default=None)
-def main(train_config, conv_config, pol_ckpt):
+@click.option("--traj", "-t", type=str, default=None)
+def main(train_config, conv_config, pol_ckpt, traj=None):
     from simple_bc._interfaces.encoder import Encoder
     from simple_bc._interfaces.policy import Policy
 
@@ -347,10 +373,11 @@ def main(train_config, conv_config, pol_ckpt):
     ee_control = conv_config.ee_control
     proprio = train_config.train_dataset.value.aug_cfg.use_proprio
 
-    agent = Agent(policy, scaled_actions, ee_control)
+    if traj is None:
+        wandb.init(project="simple-bc", name="test")
 
-    wandb.init(project="simple-bc", name="test")
-    
+    agent = Agent(policy, scaled_actions, ee_control, traj)
+
     r = rospy.Rate(5)
     control_pub = rospy.Publisher("/control/status", Bool, queue_size=1)
     while True:
@@ -364,7 +391,6 @@ def main(train_config, conv_config, pol_ckpt):
             except RuntimeError as e:
                 agent.save_vid()
                 break
-        # input("Press enter to continue...")
 
 
 if __name__ == "__main__":
