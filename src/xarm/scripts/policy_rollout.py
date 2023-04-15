@@ -39,14 +39,18 @@ class Agent:
         self.ee_control = ee_control
         self.policy = policy
 
+
         if traj is None:
+            wandb.init(project="simple-bc", name="test")
             self.traj = None
+            self.wandb = False
         else:
             with open(traj, "rb") as f:
                 if traj is not None:
                     traj = h5py.File(traj, "r")
                     traj_id = list(self.traj.keys())[0]
                     self.traj = iter(self.traj[traj_id]["dict_str_actions"])
+            self.wandb = True
 
         self.vid = []
         self.all_vid = []
@@ -335,8 +339,9 @@ class Agent:
         else:
             success = 0
 
-        wandb.log({"video": wandb.Video(vid[::4], fps=30, format="mp4"),
-                   "success": success}, step=self.num_iter)
+        if self.wandb:
+            wandb.log({"video": wandb.Video(vid[::4], fps=30, format="mp4"),
+                    "success": success}, step=self.num_iter)
 
         self.vid = []
         self.num_iter += 1
@@ -346,11 +351,12 @@ class Agent:
         if len(self.all_vid) > 30:
             all_vid = np.array(self.all_vid[::16])
             all_vid = all_vid.transpose(0, 3, 1, 2)
-            wandb.log({"all_video": wandb.Video(all_vid, fps=30, format="mp4")}, step=self.num_iter)
-            print(f"saved all video at {self.num_iter}")
+            if self.wandb:
+                wandb.log({"all_video": wandb.Video(all_vid, fps=30, format="mp4")}, step=self.num_iter)
 
         self._ri.ungrasp()
-        wandb.finish()
+        if self.wandb:
+            wandb.finish()
 
 @click.command()
 @click.option("--train_config", "-c", type=str, default="agent config from agent training")
@@ -372,9 +378,6 @@ def main(train_config, conv_config, pol_ckpt, traj=None):
     scaled_actions = conv_config.scaled_actions
     ee_control = conv_config.ee_control
     proprio = train_config.train_dataset.value.aug_cfg.use_proprio
-
-    if traj is None:
-        wandb.init(project="simple-bc", name="test")
 
     agent = Agent(policy, scaled_actions, ee_control, traj)
 
