@@ -27,6 +27,8 @@ from natsort import natsorted
 import numpy as np
 import hydra
 
+from omegaconf import DictConfig, OmegaConf
+
 from gdict.data import GDict, DictArray
 from utils.conversion_utils import preproc_obs, Pose, compute_inverse_action, compute_forward_action
 
@@ -40,7 +42,7 @@ def get_act_bounds(source_dir, i, ee_control=False):
 
     if len(pkls) <= 30:
         print(f"Skipping {source_dir} because it has less than 30 frames.")
-        return np.ones(3)
+        return np.zeros(3)
 
     for pkl in pkls:
         curr_ts = {}

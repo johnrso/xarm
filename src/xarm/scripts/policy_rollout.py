@@ -194,7 +194,7 @@ class Agent:
 
         # keep a running queue of self.policy.encoder.num_frames observations
         T = self.policy.encoder.num_frames
-        
+
         self._obs['rgb'].append(rgb_wrist)
         self._obs['depth'].append(depth_wrist)
         self._obs['state'].append(p_ee_in_link0)
@@ -207,7 +207,7 @@ class Agent:
             self._obs['state'] = self._obs['state'][-T:]
             self._obs['camera_poses'] = self._obs['camera_poses'][-T:]
             self._obs['K_matrices'] = self._obs['K_matrices'][-T:]
-        
+
         while len(self._obs['rgb']) < T:
             self._obs['rgb'].insert(0, self._obs['rgb'][0])
             self._obs['depth'].insert(0, self._obs['depth'][0])
@@ -329,7 +329,7 @@ class Agent:
                                             control_pose,
                                             ee_control=self.ee_control,
                                             scaled_actions=self.scaled_actions)
-        
+
         return final_pose.to_44_matrix()
 
     def save_vid(self):
@@ -377,8 +377,9 @@ def main(train_config, conv_config, pol_ckpt, traj=None):
 
     train_config = OmegaConf.load(train_config)
     assert pol_ckpt is not None, "ckpt is required"
-    encoder = Encoder.load_encoder(train_config.encoder.value)
-    policy = Policy.load_policy(encoder, train_config.policy.value)
+    encoder = Encoder.build_encoder(cfg.encoder.value).to(cfg.device)
+    policy = Policy.build_policy(encoder.out_shape, cfg.policy.value).to(cfg.device)  # Updated shape
+
     policy.load_state_dict(torch.load(pol_ckpt))
     policy.to(policy.device)
 

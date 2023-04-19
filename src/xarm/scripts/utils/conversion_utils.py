@@ -93,22 +93,22 @@ class Pose(object):
         return "p: {}, q: {}".format(self.p, self.q)
 
 
-def compute_inverse_action(p, p_new, ee_control=False, scale_factor=-1):
+def compute_inverse_action(p, p_new, ee_control=False, scale_factor=None):
     assert isinstance(p, Pose) and isinstance(p_new, Pose)
     if ee_control:
         dpose = p.inv() * p_new
     else:
         dpose = p_new * p.inv()
 
-    if scale_factor > 0:
+    if scale_factor is not None:
         dpose.p = dpose.p / scale_factor
 
     return dpose
 
-def compute_forward_action(p, dpose, ee_control=False, scale_factor=-1):
+def compute_forward_action(p, dpose, ee_control=False, scale_factor=None):
     assert isinstance(p, Pose) and isinstance(dpose, Pose)
     dpose = Pose(*dpose.to_numpy())
-    if scaled_factor > 0:
+    if scaled_factor is not None:
         dpose.p = dpose.p * scale_factor
 
     dpose.q = dpose.q / np.linalg.norm(dpose.q)
