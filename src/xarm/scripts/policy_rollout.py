@@ -38,7 +38,7 @@ class Agent:
         self.scaled_actions = scaled_actions
         self.ee_control = ee_control
         self.policy = policy
-
+        self._ri = None
 
         if traj is None:
             wandb.init(project="simple-bc", name="test")
@@ -48,8 +48,8 @@ class Agent:
             with open(traj, "rb") as f:
                 if traj is not None:
                     traj = h5py.File(traj, "r")
-                    traj_id = list(self.traj.keys())[0]
-                    self.traj = iter(self.traj[traj_id]["dict_str_actions"])
+                    traj_id = list(traj.keys())[0]
+                    self.traj = iter(traj[traj_id]["dict_str_actions"])
             self.wandb = True
 
         self.vid = []
@@ -61,8 +61,8 @@ class Agent:
         rospy.init_node("agent", anonymous=True)
         rospy.on_shutdown(self.close)
 
-        self._setup_robot()
         self._setup_listeners()
+        self._setup_robot()
 
     def _setup_robot(self):
         self._gripper_action_prev = True  # true if closed, false if open
@@ -194,17 +194,26 @@ class Agent:
 
         # keep a running queue of self.policy.encoder.num_frames observations
         T = self.policy.encoder.num_frames
+        
         self._obs['rgb'].append(rgb_wrist)
         self._obs['depth'].append(depth_wrist)
         self._obs['state'].append(p_ee_in_link0)
         self._obs['camera_poses'].append(T_camera_in_link0)
         self._obs['K_matrices'].append(K_wrist)
 
-        self._obs['rgb'] = self._obs['rgb'][-T:]
-        self._obs['depth'] = self._obs['depth'][-T:]
-        self._obs['state'] = self._obs['state'][-T:]
-        self._obs['camera_poses'] = self._obs['camera_poses'][-T:]
-        self._obs['K_matrices'] = self._obs['K_matrices'][-T:]
+        if len(self._obs['rgb']) > T:
+            self._obs['rgb'] = self._obs['rgb'][-T:]
+            self._obs['depth'] = self._obs['depth'][-T:]
+            self._obs['state'] = self._obs['state'][-T:]
+            self._obs['camera_poses'] = self._obs['camera_poses'][-T:]
+            self._obs['K_matrices'] = self._obs['K_matrices'][-T:]
+        
+        while len(self._obs['rgb']) < T:
+            self._obs['rgb'].insert(0, self._obs['rgb'][0])
+            self._obs['depth'].insert(0, self._obs['depth'][0])
+            self._obs['state'].insert(0, self._obs['state'][0])
+            self._obs['camera_poses'].insert(0, self._obs['camera_poses'][0])
+            self._obs['K_matrices'].insert(0, self._obs['K_matrices'][0])
 
     def record_video(self, rgb_msg_wrist, rgb_msg_base):
         rospy.loginfo_once(f"recording video")
@@ -225,9 +234,8 @@ class Agent:
         self.all_vid.append(vid_frame)
 
     def get_obs(self):
-        while not self._obs:
+        while len(self._obs['rgb']) < self.policy.encoder.num_frames:
             rospy.sleep(0.001)
-        assert self._obs is not None
 
         rgb = np.array(self._obs["rgb"]).transpose(0, 3, 1, 2)
         depth = np.array(self._obs["depth"])
@@ -257,7 +265,7 @@ class Agent:
         rospy.sleep(1)
 
         self._robot.reset_pose()
-        self._ri.angle_vector(self._robot.angle_vector(), time=5)
+        self._ri.angle_vector(self._robot.angle_vector(), time=4)
         self._ri.wait_interpolation()
 
         self._ri.grasp()
@@ -296,7 +304,7 @@ class Agent:
 
     def act(self, obs):
         if self.traj is not None:
-            action = to_torch(self.traj, device=self.policy.device).float().unsqueeze(0)
+            action = to_torch(next(self.traj), device=self.policy.device).float().unsqueeze(0)
         else:
             with torch.no_grad():
                 action = self.policy(obs)
@@ -321,7 +329,7 @@ class Agent:
                                             control_pose,
                                             ee_control=self.ee_control,
                                             scaled_actions=self.scaled_actions)
-
+        
         return final_pose.to_44_matrix()
 
     def save_vid(self):
@@ -353,8 +361,8 @@ class Agent:
             all_vid = all_vid.transpose(0, 3, 1, 2)
             if self.wandb:
                 wandb.log({"all_video": wandb.Video(all_vid, fps=30, format="mp4")}, step=self.num_iter)
-
-        self._ri.ungrasp()
+        if self._ri is not None:
+            self._ri.ungrasp()
         if self.wandb:
             wandb.finish()
 
@@ -385,7 +393,8 @@ def main(train_config, conv_config, pol_ckpt, traj=None):
     control_pub = rospy.Publisher("/control/status", Bool, queue_size=1)
     while True:
         obs = agent.reset()
-        while not rospy.is_shutdown():
+        steps = 0
+        while not rospy.is_shutdown() and steps < 180:
             try:
                 action = agent.act(obs)
                 obs = agent.step(action)
@@ -394,6 +403,8 @@ def main(train_config, conv_config, pol_ckpt, traj=None):
             except RuntimeError as e:
                 agent.save_vid()
                 break
+
+            steps += 1
 
 
 if __name__ == "__main__":

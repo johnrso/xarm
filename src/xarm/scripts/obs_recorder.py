@@ -181,7 +181,6 @@ class ObsRecorder:
         # K_wrist matrix will be recorded in K_wrist form and then inverted during preprocessing by model
         position, quaternion = self._tf_listener.lookupTransform(
             target_frame="link_base",
-            # source_frame="camera_link",
             source_frame="wrist_camera_color_optical_frame",
             time=rospy.Time(0),
         )
@@ -190,7 +189,7 @@ class ObsRecorder:
         T_camera_in_link0[:3, 3] = position
 
         p, q = control_msg.transform.translation, control_msg.transform.rotation
-        # convert quaternion to wxyz.
+        
         position = [p.x, p.y, p.z]
         quaternion = [q.w, q.x, q.y, q.z]
         control = np.concatenate([position, quaternion])
