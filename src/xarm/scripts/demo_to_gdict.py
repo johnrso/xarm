@@ -173,18 +173,20 @@ def main(cfg):
     val_indices = np.random.choice(len(subdirs), size=val_size, replace=False)
     val_indices = set(val_indices)
 
-    print(f"Getting min/max actions...")
-    pbar = tqdm(range(len(subdirs)))
-    scale_factor = None
-    for i in pbar:
-        if i in val_indices:
-            continue
-        curr_scale_factor = get_act_bounds(subdirs[i], i, ee_control=cfg.ee_control)
-        if scale_factor is None:
-            scale_factor = curr_scale_factor
-        else:
-            scale_factor = np.maximum(scale_factor, curr_scale_factor)
-        pbar.set_description(f"t: {i}")
+    if cfg.scale_factor is not "none":
+        scale_factor = np.array(cfg.scale_factor)
+    else:
+        pbar = tqdm(range(len(subdirs)))
+        scale_factor = None
+        for i in pbar:
+            if i in val_indices:
+                continue
+            curr_scale_factor = get_act_bounds(subdirs[i], i, ee_control=cfg.ee_control)
+            if scale_factor is None:
+                scale_factor = curr_scale_factor
+            else:
+                scale_factor = np.maximum(scale_factor, curr_scale_factor)
+            pbar.set_description(f"t: {i}")
 
     print(f"Scale factor is {scale_factor.tolist()}. Outputting to {output_dir}. (val indices: {val_indices}))")
     pbar = tqdm(range(len(subdirs)))
