@@ -42,6 +42,11 @@ def preproc_obs(rgb, depth, camera_poses, K_matrices, state):
     # resize according to left crop / scale
     K_matrices[:2, :] *= 224.0 / sq_size
 
+    # convert the state to a Pose object and back,
+    # which will ensure that the quaternion is normalized.
+
+    state = Pose(*state).to_numpy()
+
     obs = {}
     obs['rgb'] = rgb
     obs['depth'] = depth

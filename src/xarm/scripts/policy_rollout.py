@@ -190,10 +190,6 @@ class Agent:
         assert depth_base.dtype == np.uint16 and depth_base.ndim == 2
         depth_base = depth_base.astype(np.float32) / 1000
 
-        K_base = np.array(caminfo_msg_base.K).reshape(3, 3)
-        joint_positions = np.array(joint_msg.position, dtype=np.float32)
-        joint_velocites = np.array(joint_msg.velocity, dtype=np.float32)
-
         position, quaternion = self._tf_listener.lookupTransform(
             target_frame="link_base",
             source_frame="link_tcp",
@@ -204,11 +200,13 @@ class Agent:
         quaternion = np.array(quaternion)[[3, 0, 1, 2]]
         p_ee_in_link0 = np.concatenate([position, quaternion]) # wxyz quaternion
 
-        self._current_obs['rgb'] = rgb_wrist
-        self._current_obs['depth'] = depth_wrist
-        self._current_obs['state'] = p_ee_in_link0
-        self._current_obs['camera_poses'] = T_camera_in_link0
-        self._current_obs['camera_intrinsics'] = K_wrist
+        rgb = rgb_wrist.transpose(2, 0, 1)
+        self._current_obs = preproc_obs(rgb=rgb, 
+                                        depth=depth_wrist, 
+                                        camera_poses=T_camera_in_link0, 
+                                        K_matrices=K_wrist, 
+                                        state=p_ee_in_link0)
+        
 
     def record_video(self, rgb_msg_wrist, rgb_msg_base):
         rospy.loginfo_once(f"recording video")
@@ -229,14 +227,15 @@ class Agent:
         self.all_vid.append(vid_frame)
 
     def get_obs(self):
-        while len(self._current_obs['rgb']) < self.encoder.num_frames:
+        while self._current_obs['rgb'] is None:
             rospy.sleep(0.001)
+        
+        self._obs['rgb'].append(self._current_obs['rgb'])
+        self._obs['depth'].append(self._current_obs['depth'])
+        self._obs['state'].append(self._current_obs['state'])
+        self._obs['camera_poses'].append(self._current_obs['camera_poses'])
+        self._obs['K_matrices'].append(self._current_obs['K_matrices'])
 
-        self._obs['rgb'].append(rgb_wrist)
-        self._obs['depth'].append(depth_wrist)
-        self._obs['state'].append(p_ee_in_link0)
-        self._obs['camera_poses'].append(T_camera_in_link0)
-        self._obs['K_matrices'].append(K_wrist)
 
         if len(self._obs['rgb']) > self.T:
             self._obs['rgb'] = self._obs['rgb'][-self.T:]
@@ -252,13 +251,19 @@ class Agent:
             self._obs['camera_poses'].insert(0, self._obs['camera_poses'][0])
             self._obs['K_matrices'].insert(0, self._obs['K_matrices'][0])
 
-        rgb = np.array(self._obs["rgb"]).transpose(0, 3, 1, 2)
+        rgb = np.array(self._obs["rgb"])
         depth = np.array(self._obs["depth"])
         state = np.array(self._obs["state"])
         camera_poses = np.array(self._obs["camera_poses"])
         K_matrices = np.array(self._obs["K_matrices"])
 
-        obs = preproc_obs(rgb, depth, camera_poses, K_matrices, state)
+        obs = {
+            "rgb": rgb,
+            "depth": depth,
+            "state": state,
+            "camera_poses": camera_poses,
+            "K_matrices": K_matrices,
+        }
 
         for k in obs:
             obs[k] = to_torch(obs[k], device=self.device).float().unsqueeze(0)
@@ -284,12 +289,29 @@ class Agent:
         self._ri.wait_interpolation()
 
         self._ri.grasp()
+
+        self._obs = {}
+        self._obs['rgb'] = []
+        self._obs['depth'] = []
+        self._obs['camera_poses'] = []
+        self._obs['K_matrices'] = []
+        self._obs['state'] = []
+
+        self._current_obs = {}
+        self._current_obs['rgb'] = None
+        self._current_obs['depth'] = None
+        self._current_obs['camera_poses'] = None
+        self._current_obs['K_matrices'] = None
+        self._current_obs['state'] = None
+
+
         obs = self.get_obs()
         self.vid = []
 
         return obs
 
     def step(self, action):
+        rospy.loginfo_once(f"step")
         control = action["control"]
         gripper_action = action["gripper"]
 
@@ -413,7 +435,7 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
     while True:
         obs = agent.reset()
         steps = 0
-        while not rospy.is_shutdown() and steps < 70:
+        while not rospy.is_shutdown() and steps < 150:
             try:
                 action = agent.act(obs)
                 obs = agent.step(action)

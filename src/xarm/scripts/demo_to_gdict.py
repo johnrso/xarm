@@ -66,7 +66,6 @@ def get_act_bounds(source_dir, i, ee_control=False):
 
         if requested_control is not None:
             curr_pose = obs['state']
-            gripper_state = demo.pop('gripper_state')
 
             # Compute transform from previous state to current state.
             cpose = Pose(*curr_pose)
@@ -173,7 +172,7 @@ def main(cfg):
     val_indices = np.random.choice(len(subdirs), size=val_size, replace=False)
     val_indices = set(val_indices)
 
-    if cfg.scale_factor is not "none":
+    if cfg.scale_factor != "none":
         scale_factor = np.array(cfg.scale_factor)
     else:
         pbar = tqdm(range(len(subdirs)))
