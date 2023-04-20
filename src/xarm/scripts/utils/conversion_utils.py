@@ -60,7 +60,7 @@ class Pose(object):
         if self.q[3] < 0:
             self.q *= -1
 
-        dpose.q = dpose.q / np.linalg.norm(dpose.q)
+        self.q = self.q / np.linalg.norm(self.q)
 
     def __mul__(self, other):
         assert isinstance(other, Pose)
@@ -110,9 +110,8 @@ def compute_inverse_action(p, p_new, ee_control=False, scale_factor=None):
 def compute_forward_action(p, dpose, ee_control=False, scale_factor=None):
     assert isinstance(p, Pose) and isinstance(dpose, Pose)
     dpose = Pose(*dpose.to_numpy())
-    if scaled_factor is not None:
+    if scale_factor is not None:
         dpose.p = dpose.p * scale_factor
-
 
     if ee_control:
         p_new = p * dpose

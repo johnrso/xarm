@@ -30,15 +30,20 @@ from omegaconf import OmegaConf
 
 class Agent:
     def __init__(self,
+                 encoder,
                  policy,
-                 scaled_actions,
+                 scale_factor,
                  ee_control,
-                 traj=None):
+                 traj=None,
+                 device="cuda"):
 
-        self.scaled_actions = scaled_actions
+        self.scale_factor = scale_factor
         self.ee_control = ee_control
+        self.encoder = encoder
         self.policy = policy
         self._ri = None
+        self.device = device
+        self.T = self.encoder.num_frames
 
         if traj is None:
             wandb.init(project="simple-bc", name="test")
@@ -78,6 +83,13 @@ class Agent:
         self._obs['camera_poses'] = []
         self._obs['K_matrices'] = []
         self._obs['state'] = []
+
+        self._current_obs = {}
+        self._current_obs['rgb'] = None
+        self._current_obs['depth'] = None
+        self._current_obs['camera_poses'] = None
+        self._current_obs['K_matrices'] = None
+        self._current_obs['state'] = None
 
         self._tf_listener = tf.listener.TransformListener(cache_time=rospy.Duration(30))
 
@@ -192,28 +204,11 @@ class Agent:
         quaternion = np.array(quaternion)[[3, 0, 1, 2]]
         p_ee_in_link0 = np.concatenate([position, quaternion]) # wxyz quaternion
 
-        # keep a running queue of self.policy.encoder.num_frames observations
-        T = self.policy.encoder.num_frames
-
-        self._obs['rgb'].append(rgb_wrist)
-        self._obs['depth'].append(depth_wrist)
-        self._obs['state'].append(p_ee_in_link0)
-        self._obs['camera_poses'].append(T_camera_in_link0)
-        self._obs['K_matrices'].append(K_wrist)
-
-        if len(self._obs['rgb']) > T:
-            self._obs['rgb'] = self._obs['rgb'][-T:]
-            self._obs['depth'] = self._obs['depth'][-T:]
-            self._obs['state'] = self._obs['state'][-T:]
-            self._obs['camera_poses'] = self._obs['camera_poses'][-T:]
-            self._obs['K_matrices'] = self._obs['K_matrices'][-T:]
-
-        while len(self._obs['rgb']) < T:
-            self._obs['rgb'].insert(0, self._obs['rgb'][0])
-            self._obs['depth'].insert(0, self._obs['depth'][0])
-            self._obs['state'].insert(0, self._obs['state'][0])
-            self._obs['camera_poses'].insert(0, self._obs['camera_poses'][0])
-            self._obs['K_matrices'].insert(0, self._obs['K_matrices'][0])
+        self._current_obs['rgb'] = rgb_wrist
+        self._current_obs['depth'] = depth_wrist
+        self._current_obs['state'] = p_ee_in_link0
+        self._current_obs['camera_poses'] = T_camera_in_link0
+        self._current_obs['camera_intrinsics'] = K_wrist
 
     def record_video(self, rgb_msg_wrist, rgb_msg_base):
         rospy.loginfo_once(f"recording video")
@@ -234,8 +229,28 @@ class Agent:
         self.all_vid.append(vid_frame)
 
     def get_obs(self):
-        while len(self._obs['rgb']) < self.policy.encoder.num_frames:
+        while len(self._current_obs['rgb']) < self.encoder.num_frames:
             rospy.sleep(0.001)
+
+        self._obs['rgb'].append(rgb_wrist)
+        self._obs['depth'].append(depth_wrist)
+        self._obs['state'].append(p_ee_in_link0)
+        self._obs['camera_poses'].append(T_camera_in_link0)
+        self._obs['K_matrices'].append(K_wrist)
+
+        if len(self._obs['rgb']) > self.T:
+            self._obs['rgb'] = self._obs['rgb'][-self.T:]
+            self._obs['depth'] = self._obs['depth'][-self.T:]
+            self._obs['state'] = self._obs['state'][-self.T:]
+            self._obs['camera_poses'] = self._obs['camera_poses'][-self.T:]
+            self._obs['K_matrices'] = self._obs['K_matrices'][-self.T:]
+
+        while len(self._obs['rgb']) < self.T:
+            self._obs['rgb'].insert(0, self._obs['rgb'][0])
+            self._obs['depth'].insert(0, self._obs['depth'][0])
+            self._obs['state'].insert(0, self._obs['state'][0])
+            self._obs['camera_poses'].insert(0, self._obs['camera_poses'][0])
+            self._obs['K_matrices'].insert(0, self._obs['K_matrices'][0])
 
         rgb = np.array(self._obs["rgb"]).transpose(0, 3, 1, 2)
         depth = np.array(self._obs["depth"])
@@ -246,7 +261,7 @@ class Agent:
         obs = preproc_obs(rgb, depth, camera_poses, K_matrices, state)
 
         for k in obs:
-            obs[k] = to_torch(obs[k], device=self.policy.device).float().unsqueeze(0)
+            obs[k] = to_torch(obs[k], device=self.device).float().unsqueeze(0)
 
         return obs
 
@@ -304,10 +319,10 @@ class Agent:
 
     def act(self, obs):
         if self.traj is not None:
-            action = to_torch(next(self.traj), device=self.policy.device).float().unsqueeze(0)
+            action = to_torch(next(self.traj), device=self.device).float().unsqueeze(0)
         else:
             with torch.no_grad():
-                action = self.policy(obs)
+                action = self.policy(self.encoder(obs))
 
         act = {}
         act["control"] = action[:, :7]
@@ -328,7 +343,7 @@ class Agent:
         final_pose = compute_forward_action(pose_ee,
                                             control_pose,
                                             ee_control=self.ee_control,
-                                            scaled_actions=self.scaled_actions)
+                                            scale_factor=self.scale_factor)
 
         return final_pose.to_44_matrix()
 
@@ -370,42 +385,44 @@ class Agent:
 @click.option("--train_config", "-c", type=str, default="agent config from agent training")
 @click.option("--conv_config", "-d", type=str, default="dataset config from conversion")
 @click.option("--pol_ckpt", "-a", type=str, default=None)
+@click.option("--enc_ckpt", "-e", type=str, default=None)
 @click.option("--traj", "-t", type=str, default=None)
-def main(train_config, conv_config, pol_ckpt, traj=None):
+def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
     from simple_bc._interfaces.encoder import Encoder
     from simple_bc._interfaces.policy import Policy
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_config = OmegaConf.load(train_config)
-    assert pol_ckpt is not None, "ckpt is required"
-    encoder = Encoder.build_encoder(cfg.encoder.value).to(cfg.device)
-    policy = Policy.build_policy(encoder.out_shape, cfg.policy.value).to(cfg.device)  # Updated shape
+
+    assert pol_ckpt is not None and enc_ckpt is not None, "ckpt is required"
+    encoder = Encoder.build_encoder(train_config.encoder.value).to(device)
+    policy = Policy.build_policy(encoder.out_shape, train_config.policy.value).to(device)  # Updated shape
 
     policy.load_state_dict(torch.load(pol_ckpt))
-    policy.to(policy.device)
+    encoder.load_state_dict(torch.load(enc_ckpt))
 
     conv_config = OmegaConf.load(conv_config)
-    scaled_actions = conv_config.scaled_actions
+    scale_factor = conv_config.scale_factor
     ee_control = conv_config.ee_control
-    proprio = train_config.train_dataset.value.aug_cfg.use_proprio
+    proprio = train_config.dataset.value.aug_cfg.use_proprio
 
-    agent = Agent(policy, scaled_actions, ee_control, traj)
+    agent = Agent(encoder, policy, scale_factor, ee_control, traj)
 
     r = rospy.Rate(5)
     control_pub = rospy.Publisher("/control/status", Bool, queue_size=1)
     while True:
         obs = agent.reset()
         steps = 0
-        while not rospy.is_shutdown() and steps < 180:
+        while not rospy.is_shutdown() and steps < 70:
             try:
                 action = agent.act(obs)
                 obs = agent.step(action)
                 control_pub.publish(True)
                 r.sleep()
             except RuntimeError as e:
-                agent.save_vid()
                 break
-
             steps += 1
+        agent.save_vid()
 
 
 if __name__ == "__main__":
