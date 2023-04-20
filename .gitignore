@@ -8,3 +8,4 @@ log/
 *.egg-info
 outputs/
 wandb/
+models
