@@ -60,6 +60,8 @@ class Pose(object):
         if self.q[3] < 0:
             self.q *= -1
 
+        dpose.q = dpose.q / np.linalg.norm(dpose.q)
+
     def __mul__(self, other):
         assert isinstance(other, Pose)
         p = self.p + ttf.quaternion_matrix(self.q)[:3, :3].dot(other.p)
@@ -111,7 +113,6 @@ def compute_forward_action(p, dpose, ee_control=False, scale_factor=None):
     if scaled_factor is not None:
         dpose.p = dpose.p * scale_factor
 
-    dpose.q = dpose.q / np.linalg.norm(dpose.q)
 
     if ee_control:
         p_new = p * dpose
