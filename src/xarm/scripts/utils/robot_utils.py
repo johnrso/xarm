@@ -44,7 +44,7 @@ class XArmROSRobotInterface(ROSRobotInterfaceBase):
 
     def move_gripper(self, target_pulse, pulse_speed=SPEED_MAX, wait=True):
         goal = xarm_gripper.msg.MoveGoal(target_pulse=target_pulse, pulse_speed=pulse_speed)
-        if wait:
+        if False:
             # self.gripper_move.send_goal_and_wait(goal)
             self.gripper_move.send_goal(goal)
             rospy.sleep(0.2)

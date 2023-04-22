@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torchvision.transforms as T
 import numpy as np
+import cv2
 
 import tf.transformations as ttf
 
@@ -19,32 +20,28 @@ def to_numpy(array):
     return array
 
 def preproc_obs(rgb, depth, camera_poses, K_matrices, state):
-    image_transform = T.Compose([
-        T.Resize((224, 224), T.InterpolationMode.BILINEAR, antialias=None),
-    ])
-
     H, W = rgb.shape[-2:]
     sq_size = min(H, W)
 
-    rgb_t = to_torch(rgb, device='cuda')
-    rgb_t = rgb_t[..., :sq_size, :sq_size] # TODO: left crop?
-    rgb_t = image_transform(rgb_t)
-    rgb = to_numpy(rgb_t)
+    rgb = rgb[..., :sq_size, :sq_size]
+    rgb = rgb.transpose([1, 2, 0])
+    rgb = cv2.resize(rgb, (224, 224), interpolation=cv2.INTER_LINEAR)
+    rgb = rgb.transpose([2, 0, 1])
 
-    depth_t = to_torch(depth, device='cuda')
-    depth_t = depth_t.unsqueeze(-3)
-    depth_t = depth_t[..., :sq_size, :sq_size] # TODO: left crop?
-    depth_t = image_transform(depth_t)
-    depth = to_numpy(depth_t)
+    depth = depth[..., :sq_size, :sq_size]
+    depth = cv2.resize(depth, (224, 224), interpolation=cv2.INTER_LINEAR)
+    depth = depth.reshape([1, 224, 224])
 
+    # for depth, a value of 1.0 is 1 meter away. let's crop it to 2 meters, and handle nans and infs.
     depth[np.isnan(depth)] = 0.0
+    depth[np.isinf(depth)] = 0.0
+    depth[depth > 2.0] = 2.0
 
     # resize according to left crop / scale
     K_matrices[:2, :] *= 224.0 / sq_size
 
     # convert the state to a Pose object and back,
-    # which will ensure that the quaternion is normalized.
-
+    # which will ensure that the quaternion is normalized and positive scalar.
     state = Pose(*state).to_numpy()
 
     obs = {}
@@ -59,6 +56,8 @@ def preproc_obs(rgb, depth, camera_poses, K_matrices, state):
 class Pose(object):
     def __init__(self, x, y, z, qw, qx, qy, qz):
         self.p = np.array([x, y, z])
+
+        # we internally use tf.transformations, which uses [x, y, z, w] for quaternions.
         self.q = np.array([qx, qy, qz, qw])
 
         # make sure that the quaternion has positive scalar part

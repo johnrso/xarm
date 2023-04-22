@@ -94,6 +94,8 @@ def convert_single_demo(source_dir, i, output_dir, ee_control=False, scale_facto
 
     # go through the demo in reverse order.
     requested_control = None # this stores the requested pose of time t+1.
+    # remove the first few frames because they are not useful.
+    pkls = pkls[:-5]
     for pkl in pkls:
         curr_ts = {}
 
@@ -192,6 +194,11 @@ def main(cfg):
     tot = 0
     for i in pbar:
         out_dir = val_dir if i in val_indices else train_dir
+        out_dir = os.path.join(out_dir, "none")
+
+        if not os.path.isdir(out_dir):
+            os.mkdir(out_dir)
+
         tot += convert_single_demo(subdirs[i], i, output_dir=out_dir, ee_control=cfg.ee_control, scale_factor=scale_factor)
         pbar.set_description(f"t: {i}")
 

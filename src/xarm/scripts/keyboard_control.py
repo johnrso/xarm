@@ -3,6 +3,7 @@ import click
 import sys
 import threading
 
+import time
 
 import rospy
 import numpy as np
@@ -195,7 +196,6 @@ class KeyboardControl:
 
             self._control_pub.publish(transform_msg)
             self._gripper_pub.publish(self._gripper_state == "closed") # true if closed, false if open
-
             self._ri.angle_vector(self._robot.angle_vector(), time=0.5)
             self.control_hz.sleep()
 

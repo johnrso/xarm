@@ -6,6 +6,7 @@ import time
 import numpy as np
 from gdict.data import GDict
 
+np.set_printoptions(precision=3, suppress=True)
 import skrobot
 import torch
 
@@ -20,11 +21,15 @@ from std_msgs.msg import Bool
 
 import time
 
-from utils.conversion_utils import compute_forward_action, preproc_obs, Pose, to_torch
+from utils.conversion_utils import compute_forward_action, preproc_obs, Pose, to_torch, to_numpy
 from utils import robot_utils
 import click
 import wandb
 import h5py
+
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use("Agg")
 
 from omegaconf import OmegaConf
 
@@ -59,6 +64,7 @@ class Agent:
 
         self.vid = []
         self.all_vid = []
+        self.actions = []
 
         self.num_iter = 0
 
@@ -77,19 +83,8 @@ class Agent:
         self._robot.angle_vector(self._ri.angle_vector())
 
     def _setup_listeners(self):
-        self._obs = {}
-        self._obs['rgb'] = []
-        self._obs['depth'] = []
-        self._obs['camera_poses'] = []
-        self._obs['K_matrices'] = []
-        self._obs['state'] = []
-
-        self._current_obs = {}
-        self._current_obs['rgb'] = None
-        self._current_obs['depth'] = None
-        self._current_obs['camera_poses'] = None
-        self._current_obs['K_matrices'] = None
-        self._current_obs['state'] = None
+        self._obs = []
+        self._current_obs = None
 
         self._tf_listener = tf.listener.TransformListener(cache_time=rospy.Duration(30))
 
@@ -201,12 +196,13 @@ class Agent:
         p_ee_in_link0 = np.concatenate([position, quaternion]) # wxyz quaternion
 
         rgb = rgb_wrist.transpose(2, 0, 1)
-        self._current_obs = preproc_obs(rgb=rgb, 
-                                        depth=depth_wrist, 
-                                        camera_poses=T_camera_in_link0, 
-                                        K_matrices=K_wrist, 
-                                        state=p_ee_in_link0)
-        
+
+        obs = preproc_obs(rgb=rgb, 
+                          depth=depth_wrist, 
+                          camera_poses=T_camera_in_link0, 
+                          K_matrices=K_wrist, 
+                          state=p_ee_in_link0)
+        self._current_obs = GDict(obs).unsqueeze(0)
 
     def record_video(self, rgb_msg_wrist, rgb_msg_base):
         rospy.loginfo_once(f"recording video")
@@ -227,50 +223,22 @@ class Agent:
         self.all_vid.append(vid_frame)
 
     def get_obs(self):
-        while self._current_obs['rgb'] is None:
+        while self._current_obs is None:
             rospy.sleep(0.001)
-        
-        self._obs['rgb'].append(self._current_obs['rgb'])
-        self._obs['depth'].append(self._current_obs['depth'])
-        self._obs['state'].append(self._current_obs['state'])
-        self._obs['camera_poses'].append(self._current_obs['camera_poses'])
-        self._obs['K_matrices'].append(self._current_obs['K_matrices'])
 
+        curr_obs = self._current_obs
 
-        if len(self._obs['rgb']) > self.T:
-            self._obs['rgb'] = self._obs['rgb'][-self.T:]
-            self._obs['depth'] = self._obs['depth'][-self.T:]
-            self._obs['state'] = self._obs['state'][-self.T:]
-            self._obs['camera_poses'] = self._obs['camera_poses'][-self.T:]
-            self._obs['K_matrices'] = self._obs['K_matrices'][-self.T:]
+        self._obs += [curr_obs]
+        while len(self._obs) < self.T:
+            self._obs = [curr_obs] + self._obs
+        if len(self._obs) > self.T:
+            self._obs.pop(0)
 
-        while len(self._obs['rgb']) < self.T:
-            self._obs['rgb'].insert(0, self._obs['rgb'][0])
-            self._obs['depth'].insert(0, self._obs['depth'][0])
-            self._obs['state'].insert(0, self._obs['state'][0])
-            self._obs['camera_poses'].insert(0, self._obs['camera_poses'][0])
-            self._obs['K_matrices'].insert(0, self._obs['K_matrices'][0])
-
-        rgb = np.array(self._obs["rgb"])
-        depth = np.array(self._obs["depth"])
-        state = np.array(self._obs["state"])
-        camera_poses = np.array(self._obs["camera_poses"])
-        K_matrices = np.array(self._obs["K_matrices"])
-
-        obs = {
-            "rgb": rgb,
-            "depth": depth,
-            "state": state,
-            "camera_poses": camera_poses,
-            "K_matrices": K_matrices,
-        }
-
-        for k in obs:
-            obs[k] = to_torch(obs[k], device=self.device).float().unsqueeze(0)
-
+        obs = GDict.stack(self._obs, axis=1).to_torch(dtype="float32", device=self.device, non_blocking=True, wrapper=False)
         return obs
 
     def reset(self):
+        self.actions = []
         ret = self._reset()
         while robot_utils.is_xarm_in_error():
             ret = self._reset()
@@ -290,20 +258,8 @@ class Agent:
 
         self._ri.grasp()
 
-        self._obs = {}
-        self._obs['rgb'] = []
-        self._obs['depth'] = []
-        self._obs['camera_poses'] = []
-        self._obs['K_matrices'] = []
-        self._obs['state'] = []
-
-        self._current_obs = {}
-        self._current_obs['rgb'] = None
-        self._current_obs['depth'] = None
-        self._current_obs['camera_poses'] = None
-        self._current_obs['K_matrices'] = None
-        self._current_obs['state'] = None
-
+        self._obs = []
+        self._current_obs = None
 
         obs = self.get_obs()
         self.vid = []
@@ -311,10 +267,9 @@ class Agent:
         return obs
 
     def step(self, action):
-        rospy.loginfo_once(f"step")
         control = action["control"]
         gripper_action = action["gripper"]
-
+        
         if gripper_action.item() != self._gripper_action_prev:
             if gripper_action == 0:
                 self._ri.ungrasp()
@@ -322,9 +277,7 @@ class Agent:
                 self._ri.grasp()
             self._gripper_action_prev = gripper_action
 
-
-        curr_obs = self.get_obs()
-        p_ee_in_link0 = curr_obs["state"][-1, -1, :] # last element of [B, frame, proprio]
+        p_ee_in_link0 = to_numpy(self._current_obs["state"][-1, :]) # last element of [B, frame, proprio]
         T_ee_in_link0 = self.control_to_target_coords(control, p_ee_in_link0)
         target_coords = skrobot.coordinates.Coordinates(
             pos=T_ee_in_link0[:3, 3], rot=T_ee_in_link0[:3, :3]
@@ -336,29 +289,27 @@ class Agent:
             raise RuntimeError("IK failed. reset")
 
         if not ik_fail:
+            t = time.time()
             self._ri.angle_vector(self._robot.angle_vector(), time=.5)
         return self.get_obs()
-
+    
     def act(self, obs):
         if self.traj is not None:
-            action = to_torch(next(self.traj), device=self.device).float().unsqueeze(0)
+            action = next(self.traj)
         else:
             with torch.no_grad():
-                action = self.policy(self.encoder(obs))
+                action = to_numpy(self.policy(self.encoder(obs))).squeeze(0)
 
+        self.actions.append(action)
         act = {}
-        act["control"] = action[:, :7]
-        act["gripper"] = action[:, 7] > 0.5
-
+        act["control"] = action[:7]
+        act["gripper"] = action[7] > 0.5
         return act
 
     def control_to_target_coords(self, control, p_ee_in_link0):
         """
         control is delta position and delta quaternion.
         """
-        p_ee_in_link0 = p_ee_in_link0.clone().to(control.device)
-        p_ee_in_link0 = p_ee_in_link0.squeeze(0).cpu().numpy()
-        control = control.squeeze(0).cpu().numpy()
         pose_ee = Pose(*p_ee_in_link0)
         control_pose = Pose(*control)
 
@@ -370,7 +321,24 @@ class Agent:
         return final_pose.to_44_matrix()
 
     def save_vid(self):
+        log_dict = {}
         # save self.vid to wandb. it is a list of images
+        if len(self.actions) > 30:
+            fig, axs = plt.subplots(2, 4, figsize=(20, 10))
+            actions = np.array(self.actions)
+
+            for d in range(8):
+                d1, d2 = d // 4, d % 4
+                axs[d1, d2].plot(actions[:, d])
+                axs[d1, d2].set_title(f"action {d}")
+
+            # get this as an np array
+            fig.canvas.draw()
+            traj_img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+            traj_img = traj_img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+
+            log_dict["actions"] = wandb.Image(traj_img)
+
         vid = np.array(self.vid)
 
         if len(vid) <= 30:
@@ -384,9 +352,11 @@ class Agent:
         else:
             success = 0
 
+        log_dict["video"] = wandb.Video(vid[::4], fps=30, format="mp4")
+        log_dict["success"] = success
+
         if self.wandb:
-            wandb.log({"video": wandb.Video(vid[::4], fps=30, format="mp4"),
-                    "success": success}, step=self.num_iter)
+            wandb.log(log_dict, step=self.num_iter)
 
         self.vid = []
         self.num_iter += 1
@@ -403,12 +373,6 @@ class Agent:
         if self.wandb:
             wandb.finish()
 
-@click.command()
-@click.option("--train_config", "-c", type=str, default="agent config from agent training")
-@click.option("--conv_config", "-d", type=str, default="dataset config from conversion")
-@click.option("--pol_ckpt", "-a", type=str, default=None)
-@click.option("--enc_ckpt", "-e", type=str, default=None)
-@click.option("--traj", "-t", type=str, default=None)
 def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
     from simple_bc._interfaces.encoder import Encoder
     from simple_bc._interfaces.policy import Policy
@@ -417,8 +381,8 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
     train_config = OmegaConf.load(train_config)
 
     assert pol_ckpt is not None and enc_ckpt is not None, "ckpt is required"
-    encoder = Encoder.build_encoder(train_config.encoder.value).to(device)
-    policy = Policy.build_policy(encoder.out_shape, train_config.policy.value).to(device)  # Updated shape
+    encoder = Encoder.build_encoder(train_config.encoder.value).to(device).eval()
+    policy = Policy.build_policy(encoder.out_shape, train_config.policy.value).to(device).eval()  # Updated shape
 
     policy.load_state_dict(torch.load(pol_ckpt))
     encoder.load_state_dict(torch.load(enc_ckpt))
@@ -435,17 +399,31 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
     while True:
         obs = agent.reset()
         steps = 0
-        while not rospy.is_shutdown() and steps < 150:
+        while not rospy.is_shutdown() and steps < 70:
             try:
                 action = agent.act(obs)
+                r.sleep()
                 obs = agent.step(action)
                 control_pub.publish(True)
-                r.sleep()
             except RuntimeError as e:
                 break
             steps += 1
         agent.save_vid()
 
+        kill = input("kill? (y/n) ")
+        if kill == 'y':
+            break
+
+    rospy.signal_shutdown("done")
+
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--train_config", type=str, default=None)
+    parser.add_argument("--conv_config", type=str, default=None)
+    parser.add_argument("--pol_ckpt", type=str, default=None)
+    parser.add_argument("--enc_ckpt", type=str, default=None)
+    parser.add_argument("--traj", type=str, default=None)
+    args = parser.parse_args()
+    main(**vars(args))
