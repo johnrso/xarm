@@ -21,8 +21,8 @@ from std_msgs.msg import Bool
 
 import time
 
-from utils.conversion_utils import compute_forward_action, preproc_obs, Pose, to_torch, to_numpy
-from utils import robot_utils
+from xarm_utils.conversion_utils import compute_forward_action, preproc_obs, Pose, to_torch, to_numpy
+from xarm_utils import robot_utils
 import click
 import wandb
 import h5py
@@ -53,7 +53,7 @@ class Agent:
         if traj is None:
             wandb.init(project="simple-bc", name="test")
             self.traj = None
-            self.wandb = False
+            self.wandb = True
         else:
             with open(traj, "rb") as f:
                 if traj is not None:
@@ -256,8 +256,6 @@ class Agent:
         self._ri.angle_vector(self._robot.angle_vector(), time=4)
         self._ri.wait_interpolation()
 
-        self._ri.grasp()
-
         self._obs = []
         self._current_obs = None
 
@@ -298,8 +296,9 @@ class Agent:
             action = next(self.traj)
         else:
             with torch.no_grad():
-                action = to_numpy(self.policy(self.encoder(obs))).squeeze(0)
-
+                t = time.time()
+                action = to_numpy(self.policy(self.encoder(obs))[0]).squeeze(0)
+                print(f"policy took {time.time() - t} seconds")
         self.actions.append(action)
         act = {}
         act["control"] = action[:7]
@@ -381,8 +380,10 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
     train_config = OmegaConf.load(train_config)
 
     assert pol_ckpt is not None and enc_ckpt is not None, "ckpt is required"
-    encoder = Encoder.build_encoder(train_config.encoder.value).to(device).eval()
-    policy = Policy.build_policy(encoder.out_shape, train_config.policy.value).to(device).eval()  # Updated shape
+    encoder = Encoder.build_encoder(train_config.encoder).to(device).eval()
+    policy = Policy.build_policy(encoder.out_shape, 
+                                 train_config.policy,
+                                 train_config.encoder).to(device).eval()  # Updated shape
 
     policy.load_state_dict(torch.load(pol_ckpt))
     encoder.load_state_dict(torch.load(enc_ckpt))
@@ -390,7 +391,7 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
     conv_config = OmegaConf.load(conv_config)
     scale_factor = conv_config.scale_factor
     ee_control = conv_config.ee_control
-    proprio = train_config.dataset.value.aug_cfg.use_proprio
+    proprio = train_config.dataset.aug_cfg.use_proprio
 
     agent = Agent(encoder, policy, scale_factor, ee_control, traj)
 
@@ -399,7 +400,7 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
     while True:
         obs = agent.reset()
         steps = 0
-        while not rospy.is_shutdown() and steps < 70:
+        while not rospy.is_shutdown() and steps < 150:
             try:
                 action = agent.act(obs)
                 r.sleep()
@@ -415,7 +416,6 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
             break
 
     rospy.signal_shutdown("done")
-
 
 if __name__ == "__main__":
     import argparse

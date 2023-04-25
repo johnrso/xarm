@@ -14,7 +14,7 @@ import tf.transformations as ttf
 from geometry_msgs.msg import TransformStamped
 from std_msgs.msg import Bool
 
-import utils.robot_utils as robot_utils
+import xarm_utils.robot_utils as robot_utils
 
 @click.command()
 @click.option('--rotation-mode', default='euler', help='Rotation mode: rpy or euler')
@@ -42,6 +42,7 @@ class KeyboardControl:
 
         rospy.init_node("keyboard_control", anonymous=True)
         rospy.loginfo("keyboard_control node started")
+        self.state_lock = threading.Lock()
         self._pub = rospy.Publisher("/record_demo", Bool, queue_size=1)
         self._rotation_mode = rotation_mode
         invert = -1 if invert_control else 1
@@ -109,12 +110,14 @@ class KeyboardControl:
                 # close gripper
                 self._ri.grasp()
                 self._gripper_state = "closed"
-                self.delta_button = False
+                with self.state_lock:
+                    self.delta_button = False
             elif self.delta_button == 1 and self._gripper_state == "closed":
                 # open gripper
                 self._ri.ungrasp()
                 self._gripper_state = "open"
-                self.delta_button = False
+                with self.state_lock:
+                    self.delta_button = False
             elif self.mouse_state.buttons[1] == 1:
                 # end control
                 print("ending control and saving demo")
@@ -216,7 +219,6 @@ class KeyboardControl:
             rospy.sleep(1)
             self._gripper_state = "closed"
 
-
     def read_spacemouse(self):
         while 1:
             if self.mouse_state is None:
@@ -224,8 +226,9 @@ class KeyboardControl:
                 continue
             curr_button = self.mouse_state.buttons[0]
             self.mouse_state = pyspacemouse.read()
-            if self.delta_button == 0:
-                self.delta_button = self.mouse_state.buttons[0] - curr_button
+            if not self.delta_button:
+                with self.state_lock:
+                    self.delta_button = max(self.mouse_state.buttons[0] - curr_button, 0)
 
     def shutdown_hook(self):
         self._thread.join()

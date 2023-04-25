@@ -76,6 +76,9 @@ class Pose(object):
         assert isinstance(other, Pose)
         return other * self
 
+    def __str__(self):
+        return "p: {}, q: {}".format(self.p, self.q)
+
     def inv(self):
         R = ttf.quaternion_matrix(self.q)[:3, :3]
         p = -R.T.dot(self.p)
@@ -89,15 +92,38 @@ class Pose(object):
         q_reverted = np.array([self.q[3], self.q[0], self.q[1], self.q[2]])
         return np.concatenate([self.p, q_reverted])
 
+    def to_axis_angle(self):
+        """
+        returns the axis-angle representation of the rotation.
+        """
+        angle = 2 * np.arccos(self.q[3])
+        if angle > np.pi:
+            angle -= 2 * np.pi
+
+        axis = self.q[:3] / np.linalg.norm(self.q[:3])
+        p = self.p
+
+        return np.concatenate([p, axis, [angle]])
+
     def to_44_matrix(self):
         out = np.eye(4)
         out[:3, :3] = ttf.quaternion_matrix(self.q)[:3, :3]
         out[:3, 3] = self.p
         return out
 
-    def __str__(self):
-        return "p: {}, q: {}".format(self.p, self.q)
+    @staticmethod
+    def from_axis_angle(x, y, z, ax, ay, az, phi):
+        """
+        returns a Pose object from the axis-angle representation of the rotation.
+        """
 
+        p = np.array([x, y, z])
+        qw = np.cos(phi / 2.0)
+        qx = ax * np.sin(phi / 2.0)
+        qy = ay * np.sin(phi / 2.0)
+        qz = az * np.sin(phi / 2.0)
+
+        return Pose(p[0], p[1], p[2], qw, qx, qy, qz)
 
 def compute_inverse_action(p, p_new, ee_control=False, scale_factor=None):
     assert isinstance(p, Pose) and isinstance(p_new, Pose)

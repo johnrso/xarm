@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 import shutil
-import utils.robot_utils as robot_utils
+import xarm_utils.robot_utils as robot_utils
 import click
 
 import rospy
@@ -82,7 +82,7 @@ class ObsRecorder:
             "/control/gripper", Bool
         )
 
-        self.reecording_pub = rospy.Publisher("/record_demo/status", Bool, queue_size=1)
+        self.recording_pub = rospy.Publisher("/record_demo/status", Bool, queue_size=1)
         sync = message_filters.ApproximateTimeSynchronizer(
             [
                 self._sub_caminfo_wrist,
@@ -221,7 +221,7 @@ class ObsRecorder:
                 print('\r', "traj len: ", str(self.len_traj), end = '')
         except Exception as e:
             pass
-            self.reecording_pub.publish(True)
+            self.recording_pub.publish(True)
 
     def record_flag_callback(self, msg):
         # get the number of demos in self._demo_dir
