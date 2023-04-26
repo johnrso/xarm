@@ -38,7 +38,7 @@ import matplotlib.pyplot as plt
 
 from simple_bc.utils.visualization_utils import make_grid_video_from_numpy
 
-def get_act_bounds(source_dir, i, ee_control=False):
+def get_act_bounds(source_dir, i, ee_control=False, rotation_mode='quat'):
     pkls = natsorted(glob.glob(os.path.join(source_dir, '**/*.pkl'), recursive=True), reverse=True)
     demo_stack = []
 
@@ -66,7 +66,8 @@ def get_act_bounds(source_dir, i, ee_control=False):
                           depth=depth,
                           camera_poses=T_camera_in_link0,
                           K_matrices=K,
-                          state=p_ee_in_link0)
+                          state=p_ee_in_link0,
+                          rotation_mode=rotation_mode)
 
         curr_ts['obs'] = obs
 
@@ -74,9 +75,15 @@ def get_act_bounds(source_dir, i, ee_control=False):
             curr_pose = obs['state']
 
             # Compute transform from previous state to current state.
-            cpose = Pose(*curr_pose)
-            rpose = Pose(*requested_control)
-
+            if rotation_mode == "quat":
+                cpose = Pose.from_quaternion(*curr_pose)
+                rpose = Pose.from_quaternion(*requested_control)
+            elif rotation_mode == "aa":
+                cpose = Pose.from_axis_angle(*curr_pose)
+                rpose = Pose.from_quaternion(*requested_control)
+            elif rotation_mode == "euler":
+                cpose = Pose.from_euler(*curr_pose)
+                rpose = Pose.from_quaternion(*requested_control)
             action = compute_inverse_action(cpose, rpose, ee_control=ee_control)
             if scale_factor is None:
                 scale_factor = action.p
@@ -89,16 +96,17 @@ def get_act_bounds(source_dir, i, ee_control=False):
 
     return scale_factor
 
-def convert_single_demo(source_dir, 
-                        i, 
-                        traj_output_dir, 
+def convert_single_demo(source_dir,
+                        i,
+                        traj_output_dir,
                         rgb_output_dir,
                         depth_output_dir,
                         state_output_dir,
                         action_output_dir,
                         ee_control=False,
-                        scale_factor=-1, 
-                        cleanup_gripper=False):
+                        scale_factor=-1,
+                        cleanup_gripper=False,
+                        rotation_mode="quat"):
     """
     1. converts the demo into a gdict
     2. visualizes the RGB of the demo
@@ -134,7 +142,8 @@ def convert_single_demo(source_dir,
                           depth=depth,
                           camera_poses=T_camera_in_link0,
                           K_matrices=K,
-                          state=p_ee_in_link0)
+                          state=p_ee_in_link0,
+                          rotation_mode=rotation_mode)
 
         curr_ts['obs'] = obs
 
@@ -142,16 +151,26 @@ def convert_single_demo(source_dir,
             curr_pose = obs['state']
             gripper_state = demo.pop('gripper_state')
 
-            # Compute transform from previous state to current state.
-            cpose = Pose(*curr_pose)
-            rpose = Pose(*requested_control)
-
-            action = compute_inverse_action(cpose, rpose, ee_control=ee_control, scale_factor=scale_factor)
-            curr_ts['actions'] = np.concatenate([action.to_numpy(), [gripper_state]])
+            rpose = Pose.from_quaternion(*requested_control)
+            if rotation_mode == "quat":
+                cpose = Pose.from_quaternion(*curr_pose)
+                action = compute_inverse_action(cpose, rpose, ee_control=ee_control, scale_factor=scale_factor)
+                act = action.to_quaternion()
+            elif rotation_mode == "aa":
+                cpose = Pose.from_axis_angle(*curr_pose)
+                action = compute_inverse_action(cpose, rpose, ee_control=ee_control, scale_factor=scale_factor)
+                act = action.to_axis_angle()
+            elif rotation_mode == "euler":
+                cpose = Pose.from_euler(*curr_pose)
+                action = compute_inverse_action(cpose, rpose, ee_control=ee_control, scale_factor=scale_factor)
+                act = action.to_euler()
+            else:
+                raise NotImplementedError
+            curr_ts['actions'] = np.concatenate([act, [gripper_state]])
         else:
             # if this is the last frame, then we don't have a requested control. Just set it to the current pose.
             action = np.zeros(8)
-            action[3] = 1.0
+            # action[3] = 1.0
             action[7] = demo.pop('gripper_state')
 
             curr_ts['actions'] = action
@@ -164,14 +183,14 @@ def convert_single_demo(source_dir,
         curr_ts_wrapped[f'traj_{i}'] = curr_ts
 
         demo_stack = [curr_ts_wrapped] + demo_stack
-    
+
     if cleanup_gripper: # convert first repeated instance of 'closed', 'closed', ... to 'open', 'open', ... (i.e. start the demo as open)
         for curr_ts in demo_stack:
             if curr_ts[f'traj_{i}']['actions'][7] == 0.0:
                 break
             else:
                 curr_ts[f'traj_{i}']['actions'][7] = 0.0
-             
+
 
     demo_dict = DictArray.stack(demo_stack)
     GDict.to_hdf5(demo_dict, os.path.join(traj_output_dir + "", f'traj_{i}.h5'))
@@ -202,8 +221,8 @@ def convert_single_demo(source_dir,
 
 def plot_in_grid(vals, save_path):
     """
-    vals: B x T x N, where 
-    B is the number of trajectories, 
+    vals: B x T x N, where
+    B is the number of trajectories,
     T is the number of timesteps,
     N is the dimensionality of the values.
     """
@@ -214,8 +233,9 @@ def plot_in_grid(vals, save_path):
         curr = vals[b]
         for i in range(N):
             T = curr.shape[0]
-            axes[i // 4, i % 4].plot(np.arange(T), curr[:, i])
-    
+            # give them transparency
+            axes[i // 4, i % 4].plot(np.arange(T), curr[:, i], alpha=0.25)
+
     for i in range(N):
         axes[i // 4, i % 4].set_title(f"Dim {i}")
 
@@ -233,6 +253,7 @@ def main(cfg):
     output_dir += "_conv"
     output_dir += ("_ee" if cfg.ee_control else "")
     output_dir += ("_cleangrip" if cfg.cleanup_gripper else "")
+    output_dir += f"_{cfg.rotation_mode}"
 
     if not os.path.isdir(output_dir):
         os.mkdir(output_dir)
@@ -260,9 +281,9 @@ def main(cfg):
         pbar = tqdm(range(len(subdirs)))
         scale_factor = None
         for i in pbar:
-            if i in val_indices:
-                continue
-            curr_scale_factor = get_act_bounds(subdirs[i], i, ee_control=cfg.ee_control)
+            # if i in val_indices:
+            #     continue
+            curr_scale_factor = get_act_bounds(subdirs[i], i, ee_control=cfg.ee_control, rotation_mode=cfg.rotation_mode)
             if scale_factor is None:
                 scale_factor = curr_scale_factor
             else:
@@ -302,15 +323,16 @@ def main(cfg):
         if not os.path.isdir(out_dir):
             os.mkdir(out_dir)
 
-        ret = convert_single_demo(subdirs[i], 
-                                  i, 
-                                  traj_output_dir=out_dir, 
+        ret = convert_single_demo(subdirs[i],
+                                  i,
+                                  traj_output_dir=out_dir,
                                   rgb_output_dir=rgb_output_dir,
                                   depth_output_dir=depth_output_dir,
                                   state_output_dir=state_output_dir,
                                   action_output_dir=action_output_dir,
-                                  ee_control=cfg.ee_control, 
-                                  scale_factor=scale_factor, 
+                                  ee_control=cfg.ee_control,
+                                  rotation_mode=cfg.rotation_mode,
+                                  scale_factor=scale_factor,
                                   cleanup_gripper=cfg.cleanup_gripper)
         if ret != 0:
             all_rgbs.append(ret[0])

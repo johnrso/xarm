@@ -19,7 +19,7 @@ def to_numpy(array):
         return array.cpu().numpy()
     return array
 
-def preproc_obs(rgb, depth, camera_poses, K_matrices, state):
+def preproc_obs(rgb, depth, camera_poses, K_matrices, state, rotation_mode='quat'):
     H, W = rgb.shape[-2:]
     sq_size = min(H, W)
 
@@ -42,8 +42,14 @@ def preproc_obs(rgb, depth, camera_poses, K_matrices, state):
 
     # convert the state to a Pose object and back,
     # which will ensure that the quaternion is normalized and positive scalar.
-    state = Pose(*state).to_numpy()
-
+    if rotation_mode == "quat":
+        state = Pose(*state).to_quaternion()
+    elif rotation_mode == "aa":
+        state = Pose(*state).to_axis_angle()
+    elif rotation_mode == "euler":
+        state = Pose(*state).to_euler()
+    else:
+        raise ValueError("invalid rotation mode")
     obs = {}
     obs['rgb'] = rgb
     obs['depth'] = depth
@@ -85,9 +91,9 @@ class Pose(object):
         q = ttf.quaternion_inverse(self.q)
         return Pose(p[0], p[1], p[2], q[3], q[0], q[1], q[2])
 
-    def to_numpy(self):
+    def to_quaternion(self):
         """
-        this satisfies Pose(*to_numpy(p)) == p
+        this satisfies Pose(*to_quaternion(p)) == p
         """
         q_reverted = np.array([self.q[3], self.q[0], self.q[1], self.q[2]])
         return np.concatenate([self.p, q_reverted])
@@ -97,13 +103,31 @@ class Pose(object):
         returns the axis-angle representation of the rotation.
         """
         angle = 2 * np.arccos(self.q[3])
-        if angle > np.pi:
-            angle -= 2 * np.pi
+        angle = angle / np.pi
+        if angle > 1:
+            angle -= 2
 
         axis = self.q[:3] / np.linalg.norm(self.q[:3])
-        p = self.p
 
-        return np.concatenate([p, axis, [angle]])
+        # keep the axes positive
+        if axis[0] < 0:
+            axis *= -1
+            angle *= -1
+
+        return np.concatenate([self.p, axis, [angle]])
+
+    def to_euler(self):
+        q = np.array(ttf.euler_from_quaternion(self.q))
+        if q[0] > np.pi:
+            q[0] -= 2 * np.pi
+        if q[1] > np.pi:
+            q[1] -= 2 * np.pi
+        if q[2] > np.pi:
+            q[2] -= 2 * np.pi
+
+        q = q / np.pi
+
+        return np.concatenate([self.p, q, [0.0]])
 
     def to_44_matrix(self):
         out = np.eye(4)
@@ -117,12 +141,31 @@ class Pose(object):
         returns a Pose object from the axis-angle representation of the rotation.
         """
 
+        phi = phi * np.pi
         p = np.array([x, y, z])
         qw = np.cos(phi / 2.0)
         qx = ax * np.sin(phi / 2.0)
         qy = ay * np.sin(phi / 2.0)
         qz = az * np.sin(phi / 2.0)
 
+        return Pose(p[0], p[1], p[2], qw, qx, qy, qz)
+
+    @staticmethod
+    def from_euler(x, y, z, roll, pitch, yaw, _):
+        """
+        returns a Pose object from the euler representation of the rotation.
+        """
+        p = np.array([x, y, z])
+        roll, pitch, yaw = roll * np.pi, pitch * np.pi, yaw * np.pi
+        q = ttf.quaternion_from_euler(roll, pitch, yaw)
+        return Pose(p[0], p[1], p[2], q[3], q[0], q[1], q[2])
+
+    @staticmethod
+    def from_quaternion(x, y, z, qw, qx, qy, qz):
+        """
+        returns a Pose object from the quaternion representation of the rotation.
+        """
+        p = np.array([x, y, z])
         return Pose(p[0], p[1], p[2], qw, qx, qy, qz)
 
 def compute_inverse_action(p, p_new, ee_control=False, scale_factor=None):
@@ -139,7 +182,20 @@ def compute_inverse_action(p, p_new, ee_control=False, scale_factor=None):
 
 def compute_forward_action(p, dpose, ee_control=False, scale_factor=None):
     assert isinstance(p, Pose) and isinstance(dpose, Pose)
-    dpose = Pose(*dpose.to_numpy())
+    dpose = Pose.from_quaternion(*dpose.to_quaternion())
+    if scale_factor is not None:
+        dpose.p = dpose.p * scale_factor
+
+    if ee_control:
+        p_new = p * dpose
+    else:
+        p_new = dpose * p
+
+    return p_new
+
+
+def compute_forward_demo_action(p, dpose, ee_control=False, scale_factor=None):
+    assert isinstance(p, Pose) and isinstance(dpose, Pose)
     if scale_factor is not None:
         dpose.p = dpose.p * scale_factor
 

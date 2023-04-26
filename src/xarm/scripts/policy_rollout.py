@@ -15,6 +15,7 @@ import message_filters
 import rospy
 import tf
 import tf.transformations as ttf
+import threading
 
 from sensor_msgs.msg import CameraInfo, Image, JointState
 from std_msgs.msg import Bool
@@ -26,6 +27,9 @@ from xarm_utils import robot_utils
 import click
 import wandb
 import h5py
+from pynput import keyboard
+
+from simple_bc.utils.log_utils import pretty_print_cfg
 
 import matplotlib.pyplot as plt
 import matplotlib
@@ -39,11 +43,13 @@ class Agent:
                  policy,
                  scale_factor,
                  ee_control,
+                 rotation_mode,
                  traj=None,
                  device="cuda"):
 
         self.scale_factor = scale_factor
         self.ee_control = ee_control
+        self.rotation_mode = rotation_mode
         self.encoder = encoder
         self.policy = policy
         self._ri = None
@@ -132,7 +138,7 @@ class Agent:
                 self._sub_joint
             ],
             slop=0.1,
-            queue_size=50,
+            queue_size=1,
         )
         sync.registerCallback(self._obs_callback)
 
@@ -142,7 +148,7 @@ class Agent:
                 self._sub_rgb_base,
             ],
             slop=0.1,
-            queue_size=50,
+            queue_size=1,
         )
         sync.registerCallback(self.record_video)
 
@@ -197,10 +203,10 @@ class Agent:
 
         rgb = rgb_wrist.transpose(2, 0, 1)
 
-        obs = preproc_obs(rgb=rgb, 
-                          depth=depth_wrist, 
-                          camera_poses=T_camera_in_link0, 
-                          K_matrices=K_wrist, 
+        obs = preproc_obs(rgb=rgb,
+                          depth=depth_wrist,
+                          camera_poses=T_camera_in_link0,
+                          K_matrices=K_wrist,
                           state=p_ee_in_link0)
         self._current_obs = GDict(obs).unsqueeze(0)
 
@@ -238,6 +244,7 @@ class Agent:
         return obs
 
     def reset(self):
+        self.kill = False
         self.actions = []
         ret = self._reset()
         while robot_utils.is_xarm_in_error():
@@ -267,7 +274,7 @@ class Agent:
     def step(self, action):
         control = action["control"]
         gripper_action = action["gripper"]
-        
+
         if gripper_action.item() != self._gripper_action_prev:
             if gripper_action == 0:
                 self._ri.ungrasp()
@@ -290,15 +297,15 @@ class Agent:
             t = time.time()
             self._ri.angle_vector(self._robot.angle_vector(), time=.5)
         return self.get_obs()
-    
+
     def act(self, obs):
         if self.traj is not None:
             action = next(self.traj)
         else:
             with torch.no_grad():
-                t = time.time()
-                action = to_numpy(self.policy(self.encoder(obs))[0]).squeeze(0)
-                print(f"policy took {time.time() - t} seconds")
+                    action, _ = self.policy(self.encoder(obs))
+                    action = action.squeeze(0).cpu().numpy()
+
         self.actions.append(action)
         act = {}
         act["control"] = action[:7]
@@ -309,9 +316,14 @@ class Agent:
         """
         control is delta position and delta quaternion.
         """
-        pose_ee = Pose(*p_ee_in_link0)
-        control_pose = Pose(*control)
 
+        if self.rotation_mode == "quat":
+            pose_ee = Pose.from_quaternion(*p_ee_in_link0)
+            control_pose = Pose.from_quaternion(*control)
+        elif self.rotation_mode == "aa":
+            pose_ee = Pose.from_axis_angle(*p_ee_in_link0)
+            control_pose = Pose.from_axis_angle(*control)
+            
         final_pose = compute_forward_action(pose_ee,
                                             control_pose,
                                             ee_control=self.ee_control,
@@ -372,6 +384,9 @@ class Agent:
         if self.wandb:
             wandb.finish()
 
+    def raise_error(self):
+        self.kill = True
+
 def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
     from simple_bc._interfaces.encoder import Encoder
     from simple_bc._interfaces.policy import Policy
@@ -379,9 +394,12 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train_config = OmegaConf.load(train_config)
 
+    pretty_print_cfg(train_config.encoder)
+    pretty_print_cfg(train_config.policy)
+    
     assert pol_ckpt is not None and enc_ckpt is not None, "ckpt is required"
     encoder = Encoder.build_encoder(train_config.encoder).to(device).eval()
-    policy = Policy.build_policy(encoder.out_shape, 
+    policy = Policy.build_policy(encoder.out_shape,
                                  train_config.policy,
                                  train_config.encoder).to(device).eval()  # Updated shape
 
@@ -397,9 +415,21 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
 
     r = rospy.Rate(5)
     control_pub = rospy.Publisher("/control/status", Bool, queue_size=1)
+
+    def on_press(key):
+        try:
+            if key.char == "q":
+                agent.raise_error()
+                return False
+        except AttributeError:
+            pass
+    
     while True:
         obs = agent.reset()
         steps = 0
+        listener = keyboard.Listener(on_press=on_press)
+        listener.start()
+        print(f"begin trial; press q to quit")
         while not rospy.is_shutdown() and steps < 150:
             try:
                 action = agent.act(obs)
@@ -409,13 +439,13 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
             except RuntimeError as e:
                 break
             steps += 1
+            if agent.kill:
+                break
         agent.save_vid()
 
         kill = input("kill? (y/n) ")
         if kill == 'y':
-            break
-
-    rospy.signal_shutdown("done")
+            rospy.signal_shutdown("done")
 
 if __name__ == "__main__":
     import argparse
