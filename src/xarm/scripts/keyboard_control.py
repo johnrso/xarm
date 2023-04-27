@@ -13,7 +13,7 @@ import skrobot
 import tf.transformations as ttf
 from geometry_msgs.msg import TransformStamped
 from std_msgs.msg import Bool
-
+import pickle
 import xarm_utils.robot_utils as robot_utils
 
 @click.command()
@@ -24,7 +24,7 @@ import xarm_utils.robot_utils as robot_utils
 @click.option('--control-hz', default=5, help='Control frequency')
 def main(rotation_mode, angle_scale, translation_scale, invert_control, control_hz):
     kc = KeyboardControl(rotation_mode, angle_scale, translation_scale, invert_control, control_hz)
-    
+
 class KeyboardControl:
     def __init__(self,
                 rotation_mode: str = "euler",
@@ -40,6 +40,7 @@ class KeyboardControl:
         assert rotation_mode in ["rpy", "euler"], "rotation_mode must be rpy or euler; rpy is about own frame, euler is about world frame"
         assert min(angle_scale, translation_scale) > 0, "scale must be positive"
 
+        self.log_actions = []
         rospy.init_node("keyboard_control", anonymous=True)
         rospy.loginfo("keyboard_control node started")
         self.state_lock = threading.Lock()
@@ -124,10 +125,25 @@ class KeyboardControl:
                 self.in_control = False
                 self._pub.publish(False)
                 self.reset_robot_pose()
+
+                # dump log_actions to file
+                with open("log_actions.pkl", "wb") as f:
+                    pickle.dump(self.log_actions, f)
+
                 continue
 
             ee_pos = T_ee_in_link0[:3, 3]
             ee_rot = T_ee_in_link0[:3, :3]
+
+            self.log_actions.append(
+                [
+                    self.mouse_state.x,
+                    self.mouse_state.y,
+                    self.mouse_state.z,
+                    self.mouse_state.roll,
+                    self.mouse_state.pitch,
+                    self.mouse_state.yaw,
+                ])
 
             trans_transform = np.eye(4)
             trans_transform[:3, 3] = np.array([self.mouse_state.y,

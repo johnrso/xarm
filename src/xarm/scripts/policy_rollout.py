@@ -317,7 +317,7 @@ class Agent:
         control is delta position and delta quaternion.
         """
 
-        if self.rotation_mode == "quat":
+        if self.rotation_mode == "quat" or True:
             pose_ee = Pose.from_quaternion(*p_ee_in_link0)
             control_pose = Pose.from_quaternion(*control)
         elif self.rotation_mode == "aa":
