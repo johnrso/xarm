@@ -54,10 +54,9 @@ class Agent:
         self.policy = policy
         self._ri = None
         self.device = device
-        self.T = self.encoder.num_frames
+        self.T = self.encoder.num_frames        
 
         if traj is None:
-            wandb.init(project="simple-bc", name="test")
             self.traj = None
             self.wandb = True
         else:
@@ -207,7 +206,8 @@ class Agent:
                           depth=depth_wrist,
                           camera_poses=T_camera_in_link0,
                           K_matrices=K_wrist,
-                          state=p_ee_in_link0)
+                          state=p_ee_in_link0,
+                          rotation_mode=self.rotation_mode,)
         self._current_obs = GDict(obs).unsqueeze(0)
 
     def record_video(self, rgb_msg_wrist, rgb_msg_base):
@@ -317,18 +317,29 @@ class Agent:
         control is delta position and delta quaternion.
         """
 
-        if self.rotation_mode == "quat" or True:
+        print(control)
+        control = control * self.scale_factor
+
+        if self.rotation_mode == "quat":
             pose_ee = Pose.from_quaternion(*p_ee_in_link0)
             control_pose = Pose.from_quaternion(*control)
         elif self.rotation_mode == "aa":
             pose_ee = Pose.from_axis_angle(*p_ee_in_link0)
             control_pose = Pose.from_axis_angle(*control)
-            
+        elif self.rotation_mode == "euler":
+            pose_ee = Pose.from_euler(*p_ee_in_link0)
+            control_pose = Pose.from_euler(*control)
+        else:
+            raise NotImplementedError
+        
         final_pose = compute_forward_action(pose_ee,
                                             control_pose,
-                                            ee_control=self.ee_control,
-                                            scale_factor=self.scale_factor)
-
+                                            ee_control=self.ee_control)
+        
+        print("curr pose: ", pose_ee.p, pose_ee.q)
+        print("control pose: ", control_pose.p, control_pose.q)
+        print("final pose: ", final_pose.p, final_pose.q)
+        print("------------------")
         return final_pose.to_44_matrix()
 
     def save_vid(self):
@@ -387,7 +398,9 @@ class Agent:
     def raise_error(self):
         self.kill = True
 
-def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
+def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
+    assert tag is not None, "tag is required"
+
     from simple_bc._interfaces.encoder import Encoder
     from simple_bc._interfaces.policy import Policy
 
@@ -408,10 +421,18 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None):
 
     conv_config = OmegaConf.load(conv_config)
     scale_factor = conv_config.scale_factor
+    rotation_mode = conv_config.rotation_mode
     ee_control = conv_config.ee_control
     proprio = train_config.dataset.aug_cfg.use_proprio
 
-    agent = Agent(encoder, policy, scale_factor, ee_control, traj)
+
+    print(f"args to agent: scale_factor: {scale_factor}, rotation_mode: {rotation_mode}, ee_control: {ee_control}, proprio: {proprio}")
+    input()
+
+    if traj is not None:
+        wandb.init(project="internet-manipulation-test", name=tag)
+
+    agent = Agent(encoder, policy, scale_factor, ee_control, rotation_mode, traj)
 
     r = rospy.Rate(5)
     control_pub = rospy.Publisher("/control/status", Bool, queue_size=1)
@@ -455,5 +476,6 @@ if __name__ == "__main__":
     parser.add_argument("--pol_ckpt", type=str, default=None)
     parser.add_argument("--enc_ckpt", type=str, default=None)
     parser.add_argument("--traj", type=str, default=None)
+    parser.add_argument("--tag", type=str, default=None)
     args = parser.parse_args()
     main(**vars(args))

@@ -28,6 +28,8 @@ from natsort import natsorted
 import numpy as np
 import hydra
 
+np.set_printoptions(precision=3, suppress=True)
+
 from omegaconf import DictConfig, OmegaConf
 
 from gdict.data import GDict, DictArray
@@ -85,10 +87,18 @@ def get_act_bounds(source_dir, i, ee_control=False, rotation_mode='quat'):
                 cpose = Pose.from_euler(*curr_pose)
                 rpose = Pose.from_quaternion(*requested_control)
             action = compute_inverse_action(cpose, rpose, ee_control=ee_control)
-            if scale_factor is None:
-                scale_factor = action.p
+            if rotation_mode == "quat":
+                curr_scale_factor = np.abs(action.to_quaternion())
+            elif rotation_mode == "aa":
+                curr_scale_factor = np.abs(action.to_axis_angle())
+            elif rotation_mode == "euler":
+                curr_scale_factor = np.abs(action.to_euler())
             else:
-                scale_factor = np.maximum(scale_factor, action.p)
+                raise NotImplementedError
+            if scale_factor is None:
+                scale_factor = curr_scale_factor
+            else:
+                scale_factor = np.maximum(scale_factor, curr_scale_factor)
 
         requested_control = demo.pop('control')
 
@@ -154,16 +164,16 @@ def convert_single_demo(source_dir,
             rpose = Pose.from_quaternion(*requested_control)
             if rotation_mode == "quat":
                 cpose = Pose.from_quaternion(*curr_pose)
-                action = compute_inverse_action(cpose, rpose, ee_control=ee_control, scale_factor=scale_factor)
-                act = action.to_quaternion()
+                action = compute_inverse_action(cpose, rpose, ee_control=ee_control)
+                act = action.to_quaternion() / scale_factor
             elif rotation_mode == "aa":
                 cpose = Pose.from_axis_angle(*curr_pose)
-                action = compute_inverse_action(cpose, rpose, ee_control=ee_control, scale_factor=scale_factor)
-                act = action.to_axis_angle()
+                action = compute_inverse_action(cpose, rpose, ee_control=ee_control)
+                act = action.to_axis_angle() / scale_factor
             elif rotation_mode == "euler":
                 cpose = Pose.from_euler(*curr_pose)
-                action = compute_inverse_action(cpose, rpose, ee_control=ee_control, scale_factor=scale_factor)
-                act = action.to_euler()
+                action = compute_inverse_action(cpose, rpose, ee_control=ee_control)
+                act = action.to_euler() / scale_factor
             else:
                 raise NotImplementedError
             curr_ts['actions'] = np.concatenate([act, [gripper_state]])
@@ -234,7 +244,7 @@ def plot_in_grid(vals, save_path):
         for i in range(N):
             T = curr.shape[0]
             # give them transparency
-            axes[i // 4, i % 4].scatter(np.arange(T), curr[:, i], alpha=0.1)
+            axes[i // 4, i % 4].plot(np.arange(T), curr[:, i])
 
     for i in range(N):
         axes[i // 4, i % 4].set_title(f"Dim {i}")
@@ -276,13 +286,12 @@ def main(cfg):
     val_indices = set(val_indices)
 
     if cfg.scale_factor != "none":
-        scale_factor = np.array(cfg.scale_factor)
+        scale_factor = cfg.scale_factor
     else:
+        print("Computing scale factors")
         pbar = tqdm(range(len(subdirs)))
         scale_factor = None
         for i in pbar:
-            # if i in val_indices:
-            #     continue
             curr_scale_factor = get_act_bounds(subdirs[i], i, ee_control=cfg.ee_control, rotation_mode=cfg.rotation_mode)
             if scale_factor is None:
                 scale_factor = curr_scale_factor
@@ -290,7 +299,9 @@ def main(cfg):
                 scale_factor = np.maximum(scale_factor, curr_scale_factor)
             pbar.set_description(f"t: {i}")
 
-    print(f"Scale factor is {scale_factor.tolist()}. Outputting to {output_dir}. (val indices: {val_indices}))")
+    scale_factor[scale_factor == 0] = 1.0
+
+    print(f"scale factors: {scale_factor}")
     pbar = tqdm(range(len(subdirs)))
     tot = 0
 
@@ -352,10 +363,10 @@ def main(cfg):
     if len(all_rgbs) > 0:
         print(f"Visualizing all demos...")
 
-        make_grid_video_from_numpy(all_rgbs, 10, os.path.join(rgb_output_dir, "_all_rgb.mp4"), fps=30)
-        make_grid_video_from_numpy(all_depths, 10, os.path.join(depth_output_dir, "_all_depth.mp4"), fps=30)
         plot_in_grid(all_actions, os.path.join(action_output_dir, "_all_actions.png"))
         plot_in_grid(all_states, os.path.join(state_output_dir, "_all_states.png"))
+        make_grid_video_from_numpy(all_rgbs, 10, os.path.join(rgb_output_dir, "_all_rgb.mp4"), fps=30)
+        make_grid_video_from_numpy(all_depths, 10, os.path.join(depth_output_dir, "_all_depth.mp4"), fps=30)
 
 if __name__ == '__main__':
     main()

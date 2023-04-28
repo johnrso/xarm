@@ -40,7 +40,6 @@ class KeyboardControl:
         assert rotation_mode in ["rpy", "euler"], "rotation_mode must be rpy or euler; rpy is about own frame, euler is about world frame"
         assert min(angle_scale, translation_scale) > 0, "scale must be positive"
 
-        self.log_actions = []
         rospy.init_node("keyboard_control", anonymous=True)
         rospy.loginfo("keyboard_control node started")
         self.state_lock = threading.Lock()
@@ -126,24 +125,10 @@ class KeyboardControl:
                 self._pub.publish(False)
                 self.reset_robot_pose()
 
-                # dump log_actions to file
-                with open("log_actions.pkl", "wb") as f:
-                    pickle.dump(self.log_actions, f)
-
                 continue
 
             ee_pos = T_ee_in_link0[:3, 3]
             ee_rot = T_ee_in_link0[:3, :3]
-
-            self.log_actions.append(
-                [
-                    self.mouse_state.x,
-                    self.mouse_state.y,
-                    self.mouse_state.z,
-                    self.mouse_state.roll,
-                    self.mouse_state.pitch,
-                    self.mouse_state.yaw,
-                ])
 
             trans_transform = np.eye(4)
             trans_transform[:3, 3] = np.array([self.mouse_state.y,
@@ -230,10 +215,10 @@ class KeyboardControl:
         self._ri.wait_interpolation()
         self.delta_button = 0
 
-        if self._gripper_state == "open":
-            self._ri.grasp()
-            rospy.sleep(1)
-            self._gripper_state = "closed"
+        # if self._gripper_state == "open":
+        #     self._ri.grasp()
+        #     rospy.sleep(1)
+        #     self._gripper_state = "closed"
 
     def read_spacemouse(self):
         while 1:

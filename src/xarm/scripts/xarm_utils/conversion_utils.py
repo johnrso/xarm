@@ -168,36 +168,19 @@ class Pose(object):
         p = np.array([x, y, z])
         return Pose(p[0], p[1], p[2], qw, qx, qy, qz)
 
-def compute_inverse_action(p, p_new, ee_control=False, scale_factor=None):
+def compute_inverse_action(p, p_new, ee_control=False):
     assert isinstance(p, Pose) and isinstance(p_new, Pose)
+
     if ee_control:
         dpose = p.inv() * p_new
     else:
         dpose = p_new * p.inv()
 
-    if scale_factor is not None:
-        dpose.p = dpose.p / scale_factor
-
     return dpose
 
-def compute_forward_action(p, dpose, ee_control=False, scale_factor=None):
+def compute_forward_action(p, dpose, ee_control=False):
     assert isinstance(p, Pose) and isinstance(dpose, Pose)
     dpose = Pose.from_quaternion(*dpose.to_quaternion())
-    if scale_factor is not None:
-        dpose.p = dpose.p * scale_factor
-
-    if ee_control:
-        p_new = p * dpose
-    else:
-        p_new = dpose * p
-
-    return p_new
-
-
-def compute_forward_demo_action(p, dpose, ee_control=False, scale_factor=None):
-    assert isinstance(p, Pose) and isinstance(dpose, Pose)
-    if scale_factor is not None:
-        dpose.p = dpose.p * scale_factor
 
     if ee_control:
         p_new = p * dpose
