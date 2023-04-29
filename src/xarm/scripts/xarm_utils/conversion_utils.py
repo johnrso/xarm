@@ -23,12 +23,20 @@ def preproc_obs(rgb, depth, camera_poses, K_matrices, state, rotation_mode='quat
     H, W = rgb.shape[-2:]
     sq_size = min(H, W)
 
-    rgb = rgb[..., :sq_size, :sq_size]
+    # crop the center square
+    if H > W:
+        rgb = rgb[..., (-sq_size/2):(sq_size/2), :sq_size]
+        depth = depth[..., (-sq_size/2):(sq_size/2), :sq_size]
+        K_matrices[:2, :] *= 224.0 / sq_size # TODO: K-matrix has now changed because of a center crop. Figure out the change.
+    elif W < H:
+        rgb = rgb[..., :sq_size, (-sq_size/2):(sq_size/2)]
+        depth = depth[..., :sq_size, (-sq_size/2):(sq_size/2)]
+        K_matrices[:2, :] *= 224.0 / sq_size # TODO: K-matrix has now changed because of a center crop. Figure out the change.
+    
     rgb = rgb.transpose([1, 2, 0])
     rgb = cv2.resize(rgb, (224, 224), interpolation=cv2.INTER_LINEAR)
     rgb = rgb.transpose([2, 0, 1])
 
-    depth = depth[..., :sq_size, :sq_size]
     depth = cv2.resize(depth, (224, 224), interpolation=cv2.INTER_LINEAR)
     depth = depth.reshape([1, 224, 224])
 
@@ -36,9 +44,6 @@ def preproc_obs(rgb, depth, camera_poses, K_matrices, state, rotation_mode='quat
     depth[np.isnan(depth)] = 0.0
     depth[np.isinf(depth)] = 0.0
     depth[depth > 2.0] = 2.0
-
-    # resize according to left crop / scale
-    K_matrices[:2, :] *= 224.0 / sq_size
 
     # convert the state to a Pose object and back,
     # which will ensure that the quaternion is normalized and positive scalar.
