@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+q#!/usr/bin/env python
 import os
 import sys
 import time
@@ -30,6 +30,7 @@ import h5py
 from pynput import keyboard
 
 from simple_bc.utils.log_utils import pretty_print_cfg
+from simple_bc.utils.visualization_utils import make_grid_video_from_numpy
 
 import matplotlib.pyplot as plt
 import matplotlib
@@ -228,7 +229,6 @@ class Agent:
         vid_frame = np.concatenate([rgb_wrist, rgb_base], axis=1)
 
         self.vid.append(vid_frame)
-        self.all_vid.append(vid_frame)
 
     def get_obs(self):
         while self._current_obs is None:
@@ -379,16 +379,16 @@ class Agent:
         if self.wandb:
             wandb.log(log_dict, step=self.num_iter)
 
+        self.all_vid.append(vid)
         self.vid = []
         self.num_iter += 1
 
     def close(self):
         self.save_vid()
         if len(self.all_vid) > 30:
-            all_vid = np.array(self.all_vid[::16])
-            all_vid = all_vid.transpose(0, 3, 1, 2)
             if self.wandb:
-                wandb.log({"all_video": wandb.Video(all_vid, fps=30, format="mp4")}, step=self.num_iter)
+                make_grid_video_from_numpy(self.all_vid, 5, f"{wandb.run.dir}/all_vid_{self.tag}.mp4")
+                wandb.save(f"{wandb.run.dir}/all_vid_{self.tag}.mp4")
         if self._ri is not None:
             self._ri.ungrasp()
         if self.wandb:
