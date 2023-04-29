@@ -154,7 +154,7 @@ def convert_single_demo(source_dir,
                           camera_poses=T_camera_in_link0,
                           K_matrices=K,
                           state=p_ee_in_link0,
-                          rotation_mode=rotation_mode)
+                          rotation_mode=rotation_mode, depth_clip=2.0)
     
             
         rgb_base = demo.pop(f'rgb_base').transpose([2, 0, 1]) * 1.0
@@ -165,10 +165,10 @@ def convert_single_demo(source_dir,
                                camera_poses=T_camera_in_link0,
                                K_matrices=K,
                                state=p_ee_in_link0,
-                               rotation_mode=rotation_mode)
+                               rotation_mode=rotation_mode, depth_clip=4.0)
         
-        obs['rgb_base'] = obs_base['rgb']
-        obs['depth_base'] = obs_base['depth']
+        obs['rgb'] = np.stack([obs['rgb'], obs_base['rgb']], axis=0)
+        obs['depth'] = np.stack([obs['depth'], obs_base['depth']], axis=0)
 
         curr_ts['obs'] = obs
 
@@ -207,6 +207,7 @@ def convert_single_demo(source_dir,
         curr_ts_wrapped = dict()
         curr_ts_wrapped[f'traj_{i}'] = curr_ts
 
+
         demo_stack = [curr_ts_wrapped] + demo_stack
 
     if cleanup_gripper: # convert first repeated instance of 'closed', 'closed', ... to 'open', 'open', ... (i.e. start the demo as open)
@@ -219,15 +220,30 @@ def convert_single_demo(source_dir,
     demo_dict = DictArray.stack(demo_stack)
     GDict.to_hdf5(demo_dict, os.path.join(traj_output_dir + "", f'traj_{i}.h5'))
 
-    # save the rgb and depth videos
-    all_rgbs = demo_dict[f'traj_{i}']['obs']['rgb'].transpose([0, 2, 3, 1])
+## save the base videos
+    # save the base rgb and depth videos
+    all_rgbs = demo_dict[f'traj_{i}']['obs']['rgb'][:, 1].transpose([0, 2, 3, 1])
     all_rgbs = all_rgbs.astype(np.uint8)
     _, H, W, _ = all_rgbs.shape
-    all_depths = demo_dict[f'traj_{i}']['obs']['depth'].reshape([-1, H, W])
+    all_depths = demo_dict[f'traj_{i}']['obs']['depth'][:, 1].reshape([-1, H, W])
+    all_depths = all_depths / 5.0 # scale to 0-1
+
+    mp.write_video(os.path.join(rgb_output_dir + "", f'traj_{i}_rgb_base.mp4'), all_rgbs, fps=30)
+    mp.write_video(os.path.join(depth_output_dir + "", f'traj_{i}_depth_base.mp4'), all_depths, fps=30)
+##
+
+## save the wrist videos
+    # save the rgb and depth videos
+    all_rgbs = demo_dict[f'traj_{i}']['obs']['rgb'][:, 0].transpose([0, 2, 3, 1])
+    all_rgbs = all_rgbs.astype(np.uint8)
+    _, H, W, _ = all_rgbs.shape
+    all_depths = demo_dict[f'traj_{i}']['obs']['depth'][:, 0].reshape([-1, H, W])
     all_depths = all_depths / 2.0 # scale to 0-1
 
-    mp.write_video(os.path.join(rgb_output_dir + "", f'traj_{i}_rgb.mp4'), all_rgbs, fps=30)
-    mp.write_video(os.path.join(depth_output_dir + "", f'traj_{i}_depth.mp4'), all_depths, fps=30)
+    mp.write_video(os.path.join(rgb_output_dir + "", f'traj_{i}_rgb_wrist.mp4'), all_rgbs, fps=30)
+    mp.write_video(os.path.join(depth_output_dir + "", f'traj_{i}_depth_wrist.mp4'), all_depths, fps=30)
+##
+
 
     all_depths = np.tile(all_depths[..., None], [1, 1, 1, 3])
 

@@ -175,34 +175,42 @@ class KeyboardControl:
             T_ee_in_link0[:3, 3] = new_ee_pos
             T_ee_in_link0[:3, :3] = new_ee_rot
 
-            self._robot.rarm.inverse_kinematics(
-                skrobot.coordinates.Coordinates(
-                    # pos=T_ee_in_link0[:3, 3], rot=T_ee_in_link0[:3, :3]
-                    pos=new_ee_pos, rot=new_ee_rot
-                )
-            )
-
-            # convert to a quaternion
-            q = ttf.quaternion_from_matrix(T_ee_in_link0)
-
-            # publish T_ee_in_link0
-            transform_msg = TransformStamped()
-            transform_msg.header.stamp = rospy.Time.now()
-            transform_msg.header.frame_id = "link0"
-            transform_msg.child_frame_id = "ee"
-            transform_msg.transform.translation.x = T_ee_in_link0[0, 3]
-            transform_msg.transform.translation.y = T_ee_in_link0[1, 3]
-            transform_msg.transform.translation.z = T_ee_in_link0[2, 3]
-            transform_msg.transform.rotation.x = q[0]
-            transform_msg.transform.rotation.y = q[1]
-            transform_msg.transform.rotation.z = q[2]
-            transform_msg.transform.rotation.w = q[3]
-
-            self._control_pub.publish(transform_msg)
-            self._gripper_pub.publish(self._gripper_state == "closed") # true if closed, false if open
-            self._ri.angle_vector(self._robot.angle_vector(), time=0.5)
+            self.move_to_pose(new_ee_pos, new_ee_rot)
+            self.publish_control(T_ee_in_link0)
             self.control_hz.sleep()
 
+    def move_to_pose(self, new_ee_pos, new_ee_rot, wait_interp=False, time=0.5):
+        self._robot.rarm.inverse_kinematics(
+            skrobot.coordinates.Coordinates(
+                pos=new_ee_pos, rot=new_ee_rot
+            )
+        )
+        
+        self._ri.angle_vector(self._robot.angle_vector(), time=time)
+
+        if wait_interp:
+            self._ri.wait_interpolation()
+    
+    def publish_control(self, T_ee_in_link0):
+        # convert to a quaternion
+        q = ttf.quaternion_from_matrix(T_ee_in_link0)
+
+        # publish T_ee_in_link0
+        transform_msg = TransformStamped()
+        transform_msg.header.stamp = rospy.Time.now()
+        transform_msg.header.frame_id = "link0"
+        transform_msg.child_frame_id = "ee"
+        transform_msg.transform.translation.x = T_ee_in_link0[0, 3]
+        transform_msg.transform.translation.y = T_ee_in_link0[1, 3]
+        transform_msg.transform.translation.z = T_ee_in_link0[2, 3]
+        transform_msg.transform.rotation.x = q[0]
+        transform_msg.transform.rotation.y = q[1]
+        transform_msg.transform.rotation.z = q[2]
+        transform_msg.transform.rotation.w = q[3]
+
+        self._control_pub.publish(transform_msg)
+        self._gripper_pub.publish(self._gripper_state == "closed") # true if closed, false if open
+ 
     def reset_robot_pose(self):
         robot_utils.recover_xarm_from_error()
         if self._gripper_state == "closed":
@@ -210,9 +218,18 @@ class KeyboardControl:
             rospy.sleep(1)
             self._gripper_state = "open"
 
-        self._robot.reset_pose()
-        self._ri.angle_vector(self._robot.angle_vector(), time=4)
-        self._ri.wait_interpolation()
+        T_ee_link_0 = ttf.quaternion_matrix(np.array([0.916, 0.0, 0.4, 0.0]))
+        T_ee_link_0[:3, 3] = np.array([0.094, 0.0, 0.626]) # original reset pose (i.e. our mean)
+        
+        reset_pos = T_ee_link_0[:3, 3] + np.random.uniform(low = [-0.1, -0.1, -0.1], high = [0.1, 0.1, 0.1])
+
+        reset_angle, reset_axis, _ = ttf.rotation_from_matrix(T_ee_link_0)
+        reset_angle += np.random.uniform(low = -np.pi/12, high = np.pi/12)
+        reset_axis += np.random.uniform(low = -0.025, high = 0.025, size=3)
+        reset_rot = ttf.rotation_matrix(reset_angle, reset_axis)[:3, :3]
+        
+        self.move_to_pose(reset_pos, reset_rot, wait_interp=True, time=6)
+
         self.delta_button = 0
 
         # if self._gripper_state == "open":
