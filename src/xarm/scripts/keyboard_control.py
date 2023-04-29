@@ -217,18 +217,22 @@ class KeyboardControl:
             self._ri.ungrasp()
             rospy.sleep(1)
             self._gripper_state = "open"
+        
+        self._robot.reset_pose()
+        self._ri.angle_vector(self._robot.angle_vector(), time=4)
+        self._ri.wait_interpolation() # suitable angle vector to allow nicer random initializations
 
         T_ee_link_0 = ttf.quaternion_matrix(np.array([0.916, 0.0, 0.4, 0.0]))
         T_ee_link_0[:3, 3] = np.array([0.094, 0.0, 0.626]) # original reset pose (i.e. our mean)
         
-        reset_pos = T_ee_link_0[:3, 3] + np.random.uniform(low = [-0.1, -0.1, -0.1], high = [0.1, 0.1, 0.1])
+        reset_pos = T_ee_link_0[:3, 3] + np.random.uniform(low = [-0.15, -0.15, -0.35], high = [0.15, 0.15, 0.05])
 
         reset_angle, reset_axis, _ = ttf.rotation_from_matrix(T_ee_link_0)
-        reset_angle += np.random.uniform(low = -np.pi/12, high = np.pi/12)
-        reset_axis += np.random.uniform(low = -0.025, high = 0.025, size=3)
+        reset_angle += np.random.uniform(low = -np.pi/6, high = np.pi/6)
+        reset_axis += np.random.uniform(low = -0.05, high = 0.05, size=3)
         reset_rot = ttf.rotation_matrix(reset_angle, reset_axis)[:3, :3]
         
-        self.move_to_pose(reset_pos, reset_rot, wait_interp=True, time=6)
+        self.move_to_pose(reset_pos, reset_rot, wait_interp=True, time=3)
 
         self.delta_button = 0
 
