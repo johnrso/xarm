@@ -1,0 +1,5 @@
+ee_control: True
+scale_factor: "none"
+source_dir: ???
+cleanup_gripper: False
+rotation_mode: "aa"

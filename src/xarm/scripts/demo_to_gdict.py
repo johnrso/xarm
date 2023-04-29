@@ -50,14 +50,15 @@ def get_act_bounds(source_dir, i, ee_control=False, rotation_mode='quat'):
 
     if len(pkls) <= 30:
         print(f"Skipping {source_dir} because it has less than 30 frames.")
-        return np.zeros(3)
+        return None
 
     for pkl in pkls:
         curr_ts = {}
         with open(pkl, 'rb') as f:
             demo = pickle.load(f)
 
-        view = "wrist"
+        view = "wrist" # TODO: support more views eventually
+
         rgb = demo.pop(f'rgb_{view}').transpose([2, 0, 1]) * 1.0
         depth = demo.pop(f'depth_{view}')
         K = demo.pop(f'K_{view}')
@@ -154,6 +155,20 @@ def convert_single_demo(source_dir,
                           K_matrices=K,
                           state=p_ee_in_link0,
                           rotation_mode=rotation_mode)
+    
+            
+        rgb_base = demo.pop(f'rgb_base').transpose([2, 0, 1]) * 1.0
+        depth_base = demo.pop(f'depth_base')
+
+        obs_base = preproc_obs(rgb=rgb_base,
+                               depth=depth_base,
+                               camera_poses=T_camera_in_link0,
+                               K_matrices=K,
+                               state=p_ee_in_link0,
+                               rotation_mode=rotation_mode)
+        
+        obs['rgb_base'] = obs_base['rgb']
+        obs['depth_base'] = obs_base['depth']
 
         curr_ts['obs'] = obs
 
@@ -200,7 +215,6 @@ def convert_single_demo(source_dir,
                 break
             else:
                 curr_ts[f'traj_{i}']['actions'][7] = 0.0
-
 
     demo_dict = DictArray.stack(demo_stack)
     GDict.to_hdf5(demo_dict, os.path.join(traj_output_dir + "", f'traj_{i}.h5'))
@@ -260,7 +274,7 @@ def main(cfg):
     if output_dir[-1] == '/':
         output_dir = output_dir[:-1]
 
-    output_dir += "_conv"
+    output_dir += "_conv_multiview"
     output_dir += ("_ee" if cfg.ee_control else "")
     output_dir += ("_cleangrip" if cfg.cleanup_gripper else "")
     output_dir += f"_{cfg.rotation_mode}"
@@ -295,7 +309,7 @@ def main(cfg):
             curr_scale_factor = get_act_bounds(subdirs[i], i, ee_control=cfg.ee_control, rotation_mode=cfg.rotation_mode)
             if scale_factor is None:
                 scale_factor = curr_scale_factor
-            else:
+            elif curr_scale_factor is not None:
                 scale_factor = np.maximum(scale_factor, curr_scale_factor)
             pbar.set_description(f"t: {i}")
 

@@ -48,6 +48,8 @@ class Agent:
                  device="cuda"):
 
         self.scale_factor = scale_factor
+
+        # TODO: fix later,
         self.ee_control = ee_control
         self.rotation_mode = rotation_mode
         self.encoder = encoder
@@ -317,8 +319,9 @@ class Agent:
         control is delta position and delta quaternion.
         """
 
-        print(control)
         control = control * self.scale_factor
+
+        print(control)
 
         if self.rotation_mode == "quat":
             pose_ee = Pose.from_quaternion(*p_ee_in_link0)
@@ -335,11 +338,7 @@ class Agent:
         final_pose = compute_forward_action(pose_ee,
                                             control_pose,
                                             ee_control=self.ee_control)
-        
-        print("curr pose: ", pose_ee.p, pose_ee.q)
-        print("control pose: ", control_pose.p, control_pose.q)
-        print("final pose: ", final_pose.p, final_pose.q)
-        print("------------------")
+
         return final_pose.to_44_matrix()
 
     def save_vid(self):
@@ -427,9 +426,8 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
 
 
     print(f"args to agent: scale_factor: {scale_factor}, rotation_mode: {rotation_mode}, ee_control: {ee_control}, proprio: {proprio}")
-    input()
 
-    if traj is not None:
+    if traj is None:
         wandb.init(project="internet-manipulation-test", name=tag)
 
     agent = Agent(encoder, policy, scale_factor, ee_control, rotation_mode, traj)
@@ -451,7 +449,7 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
         listener = keyboard.Listener(on_press=on_press)
         listener.start()
         print(f"begin trial; press q to quit")
-        while not rospy.is_shutdown() and steps < 150:
+        while not rospy.is_shutdown():
             try:
                 action = agent.act(obs)
                 r.sleep()
