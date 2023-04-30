@@ -1,4 +1,5 @@
-q#!/usr/bin/env python
+#!/usr/bin/env python
+
 import os
 import sys
 import time
@@ -379,16 +380,19 @@ class Agent:
         if self.wandb:
             wandb.log(log_dict, step=self.num_iter)
 
-        self.all_vid.append(vid)
+        self.all_vid.append(vid.transpose(0, 2, 3, 1))
         self.vid = []
         self.num_iter += 1
 
     def close(self):
+        self.vid = []
         self.save_vid()
-        if len(self.all_vid) > 30:
-            if self.wandb:
-                make_grid_video_from_numpy(self.all_vid, 5, f"{wandb.run.dir}/all_vid_{self.tag}.mp4")
-                wandb.save(f"{wandb.run.dir}/all_vid_{self.tag}.mp4")
+        if self.wandb:
+            all_vid = self.all_vid[:]
+            make_grid_video_from_numpy(all_vid, 5, f"{wandb.run.dir}/all_vid.mp4", speedup=8)
+            wandb.log({"all_vid": wandb.Video(f"{wandb.run.dir}/all_vid.mp4", fps=30, format="mp4")},
+                      step=self.num_iter)
+            print(f"saved video to {wandb.run.dir}/all_vid.mp4")
         if self._ri is not None:
             self._ri.ungrasp()
         if self.wandb:
