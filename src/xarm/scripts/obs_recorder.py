@@ -60,13 +60,13 @@ class ObsRecorder:
 
         # base camera
         self._sub_caminfo_base = message_filters.Subscriber(
-            "/wrist_camera/aligned_depth_to_color/camera_info", CameraInfo
+            "/base_camera/aligned_depth_to_color/camera_info", CameraInfo
         )
         self._sub_rgb_base = message_filters.Subscriber(
-            "/wrist_camera/color/image_rect_color", Image
+            "/base_camera/color/image_rect_color", Image
         )
         self._sub_depth_base = message_filters.Subscriber(
-            "/wrist_camera/aligned_depth_to_color/image_raw", Image
+            "/base_camera/aligned_depth_to_color/image_raw", Image
         )
 
         # proprio
@@ -189,7 +189,7 @@ class ObsRecorder:
         T_camera_in_link0[:3, 3] = position
 
         p, q = control_msg.transform.translation, control_msg.transform.rotation
-        
+
         position = [p.x, p.y, p.z]
         quaternion = [q.w, q.x, q.y, q.z]
         control = np.concatenate([position, quaternion])
@@ -221,7 +221,7 @@ class ObsRecorder:
                 print('\r', "traj len: ", str(self.len_traj), end = '')
         except Exception as e:
             pass
-            self.recording_pub.publish(True)
+        self.recording_pub.publish(True)
 
     def record_flag_callback(self, msg):
         # get the number of demos in self._demo_dir

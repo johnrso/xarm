@@ -10,7 +10,7 @@ from gdict.data import GDict
 np.set_printoptions(precision=3, suppress=True)
 import skrobot
 import torch
-
+import datetime
 import cv_bridge
 import message_filters
 import rospy
@@ -204,14 +204,18 @@ class Agent:
         quaternion = np.array(quaternion)[[3, 0, 1, 2]]
         p_ee_in_link0 = np.concatenate([position, quaternion]) # wxyz quaternion
 
-        rgb = rgb_wrist.transpose(2, 0, 1)
-
-        obs = preproc_obs(rgb=rgb,
+        rgb_wrist = rgb_wrist.transpose(2, 0, 1) * 1.0
+        rgb_base = rgb_base.transpose([2, 0, 1]) * 1.0
+         
+        obs = preproc_obs(rgb=rgb_wrist,
                           depth=depth_wrist,
+                          rgb_base=rgb_base,
+                          depth_base=depth_base,
                           camera_poses=T_camera_in_link0,
                           K_matrices=K_wrist,
                           state=p_ee_in_link0,
-                          rotation_mode=self.rotation_mode,)
+                          rotation_mode=self.rotation_mode)
+
         self._current_obs = GDict(obs).unsqueeze(0)
 
     def record_video(self, rgb_msg_wrist, rgb_msg_base):
@@ -306,9 +310,16 @@ class Agent:
             action = next(self.traj)
         else:
             with torch.no_grad():
+                    # t = time.time()
+                    # from tqdm import tqdm
+                    # for _ in tqdm(range(20)):
                     action, _ = self.policy(self.encoder(obs))
+                    # action = torch.zeros(8).unsqueeze(0).to(self.device)
                     action = action.squeeze(0).cpu().numpy()
+                    print('date: ', datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'action: ', action)
+                    # tot = time.time() - t
 
+                    # print(f"avg time: {tot/20}")
         self.actions.append(action)
         act = {}
         act["control"] = action[:7]
@@ -322,7 +333,7 @@ class Agent:
 
         control = control * self.scale_factor
 
-        print(control)
+        # print(control)
 
         if self.rotation_mode == "quat":
             pose_ee = Pose.from_quaternion(*p_ee_in_link0)

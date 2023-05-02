@@ -154,7 +154,7 @@ def convert_single_demo(source_dir,
                           camera_poses=T_camera_in_link0,
                           K_matrices=K,
                           state=p_ee_in_link0,
-                          rotation_mode=rotation_mode, depth_clip=2.0)
+                          rotation_mode=rotation_mode)
     
             
         rgb_base = demo.pop(f'rgb_base').transpose([2, 0, 1]) * 1.0
@@ -165,7 +165,7 @@ def convert_single_demo(source_dir,
                                camera_poses=T_camera_in_link0,
                                K_matrices=K,
                                state=p_ee_in_link0,
-                               rotation_mode=rotation_mode, depth_clip=4.0)
+                               rotation_mode=rotation_mode)
         
         obs['rgb'] = np.stack([obs['rgb'], obs_base['rgb']], axis=0)
         obs['depth'] = np.stack([obs['depth'], obs_base['depth']], axis=0)
@@ -274,13 +274,88 @@ def plot_in_grid(vals, save_path):
         for i in range(N):
             T = curr.shape[0]
             # give them transparency
-            axes[i // 4, i % 4].plot(np.arange(T), curr[:, i])
+            axes[i // 4, i % 4].scatter(np.arange(T), curr[:, i], alpha=0.5)
 
     for i in range(N):
         axes[i // 4, i % 4].set_title(f"Dim {i}")
+        axes[i // 4, i % 4].set_ylim([-1.0, 1.0])
 
     plt.savefig(save_path)
     plt.close()
+
+    
+    fig = plt.figure(figsize=(20, 10))
+    ax = fig.add_subplot(141, projection='3d')
+    for b in range(B):
+        curr = vals[b]
+        ax.plot(curr[:, 0], curr[:, 1], curr[:, 2], alpha=0.75)
+        # scatter the start and end points
+        ax.scatter(curr[0, 0], curr[0, 1], curr[0, 2], c='r')
+        ax.scatter(curr[-1, 0], curr[-1, 1], curr[-1, 2], c='g')
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
+        ax.legend(['Trajectory', 'Start', 'End'])
+        ax.set_xlim([-1, 1])
+        ax.set_ylim([-1, 1])
+        ax.set_zlim([-1, 1])
+
+    # get the 2D view of the XY plane, with X pointing downwards
+    ax.view_init(270, 0)
+
+    ax = fig.add_subplot(142, projection='3d')
+    for b in range(B):
+        curr = vals[b]
+        ax.plot(curr[:, 0], curr[:, 1], curr[:, 2], alpha=0.75)
+        ax.scatter(curr[0, 0], curr[0, 1], curr[0, 2], c='r')
+        ax.scatter(curr[-1, 0], curr[-1, 1], curr[-1, 2], c='g')
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
+        ax.legend(['Trajectory', 'Start', 'End'])
+        ax.set_xlim([-1, 1])
+        ax.set_ylim([-1, 1])
+        ax.set_zlim([-1, 1])
+
+    # get the 2D view of the XZ plane, with X pointing leftwards
+    ax.view_init(0, 0)
+
+    ax = fig.add_subplot(143, projection='3d')
+    for b in range(B):
+        curr = vals[b]
+        ax.plot(curr[:, 0], curr[:, 1], curr[:, 2], alpha=0.75)
+        ax.scatter(curr[0, 0], curr[0, 1], curr[0, 2], c='r')
+        ax.scatter(curr[-1, 0], curr[-1, 1], curr[-1, 2], c='g')
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
+        ax.legend(['Trajectory', 'Start', 'End'])
+        ax.set_xlim([-1, 1])
+        ax.set_ylim([-1, 1])
+        ax.set_zlim([-1, 1])
+
+    # get the 2D view of the YZ plane, with Y pointing leftwards
+    ax.view_init(0, 90)
+
+    ax = fig.add_subplot(144, projection='3d')
+    for b in range(B):
+        curr = vals[b]
+        ax.plot(curr[:, 0], curr[:, 1], curr[:, 2], alpha=0.75)
+        ax.scatter(curr[0, 0], curr[0, 1], curr[0, 2], c='r')
+        ax.scatter(curr[-1, 0], curr[-1, 1], curr[-1, 2], c='g')
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_zlabel('z')
+        ax.legend(['Trajectory', 'Start', 'End'])
+        ax.set_xlim([-1, 1])
+        ax.set_ylim([-1, 1])
+        ax.set_zlim([-1, 1])
+
+
+    plt.savefig(save_path[:-4] + "_3d.png")
+
+    plt.close()
+
 
 @hydra.main(config_path='../conf/data', config_name='no_ee')
 def main(cfg):
@@ -298,7 +373,7 @@ def main(cfg):
     if not os.path.isdir(output_dir):
         os.mkdir(output_dir)
     else:
-        input(f"Output directory {output_dir} already exists, and will be deleted. Press enter to continue...")
+        print(f"Output directory {output_dir} already exists, and will be deleted")
         shutil.rmtree(output_dir)
         os.mkdir(output_dir)
 
@@ -311,12 +386,12 @@ def main(cfg):
     if not os.path.isdir(val_dir):
         os.mkdir(val_dir)
 
-    val_size = int(min(0.1 * len(subdirs), 5))
+    val_size = int(min(0.1 * len(subdirs), 10))
     val_indices = np.random.choice(len(subdirs), size=val_size, replace=False)
     val_indices = set(val_indices)
 
     if cfg.scale_factor != "none":
-        scale_factor = cfg.scale_factor
+        scale_factor = np.array(list(cfg.scale_factor))
     else:
         print("Computing scale factors")
         pbar = tqdm(range(len(subdirs)))

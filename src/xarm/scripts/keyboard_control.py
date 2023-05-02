@@ -18,8 +18,8 @@ import xarm_utils.robot_utils as robot_utils
 
 @click.command()
 @click.option('--rotation-mode', default='euler', help='Rotation mode: rpy or euler')
-@click.option('--angle-scale', default=0.05, help='Angle scale')
-@click.option('--translation-scale', default=0.02, help='Translation scale')
+@click.option('--angle-scale', default=0.1, help='Angle scale')
+@click.option('--translation-scale', default=0.04, help='Translation scale')
 @click.option('--invert-control/--no-invert-control', is_flag=True, default=True, help='Invert control')
 @click.option('--control-hz', default=5, help='Control frequency')
 def main(rotation_mode, angle_scale, translation_scale, invert_control, control_hz):
@@ -222,17 +222,16 @@ class KeyboardControl:
         self._ri.angle_vector(self._robot.angle_vector(), time=4)
         self._ri.wait_interpolation() # suitable angle vector to allow nicer random initializations
 
-        T_ee_link_0 = ttf.quaternion_matrix(np.array([0.916, 0.0, 0.4, 0.0]))
-        T_ee_link_0[:3, 3] = np.array([0.094, 0.0, 0.626]) # original reset pose (i.e. our mean)
+        T_ee_link_0 = (self._robot.rarm.end_coords.worldcoords().T())
         
-        reset_pos = T_ee_link_0[:3, 3] + np.random.uniform(low = [-0.15, -0.15, -0.15], high = [0.15, 0.15, 0.05])
+        reset_pos = T_ee_link_0[:3, 3] + np.random.uniform(low = [0.0, -0.05, -0.1], high = [0.1, 0.05, -0.0])
 
         reset_angle, reset_axis, _ = ttf.rotation_from_matrix(T_ee_link_0)
-        reset_angle += np.random.uniform(low = -np.pi/8, high = np.pi/8)
-        reset_axis += np.random.uniform(low = -0.025, high = 0.025, size=3)
+        reset_angle += np.random.uniform(low = -np.pi/12, high = np.pi/12)
+        reset_axis += np.random.uniform(low = -0.005, high = 0.005, size=3)
         reset_rot = ttf.rotation_matrix(reset_angle, reset_axis)[:3, :3]
         
-        self.move_to_pose(reset_pos, reset_rot, wait_interp=True, time=3)
+        self.move_to_pose(reset_pos, reset_rot, wait_interp=True, time=1)
 
         self.delta_button = 0
 
