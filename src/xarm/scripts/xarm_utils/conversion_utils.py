@@ -204,7 +204,7 @@ def compute_forward_action(p, dpose, ee_control=False):
     dpose = Pose.from_quaternion(*dpose.to_quaternion())
 
     if ee_control:
-        p_new = p.inv() * dpose * p
+        p_new = p * dpose
     else:
         p_new = dpose * p
 

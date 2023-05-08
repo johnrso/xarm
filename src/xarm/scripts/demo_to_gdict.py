@@ -143,32 +143,24 @@ def convert_single_demo(source_dir,
         with open(pkl, 'rb') as f:
             demo = pickle.load(f)
 
-        rgb = demo.pop(f'rgb_{view}').transpose([2, 0, 1]) * 1.0
-        depth = demo.pop(f'depth_{view}')
-        K = demo.pop(f'K_{view}')
+        rgb_wrist = demo.pop(f'rgb_{view}').transpose([2, 0, 1]) * 1.0
+        depth_wrist = demo.pop(f'depth_{view}')
+        rgb_base = demo.pop(f'rgb_base').transpose([2, 0, 1]) * 1.0
+        depth_base = demo.pop(f'depth_base')
+        
+        K_wrist = demo.pop(f'K_{view}')
         T_camera_in_link0 = demo.pop('T_camera_in_link0')
         p_ee_in_link0 = demo.pop('p_ee_in_link0')
 
-        obs = preproc_obs(rgb=rgb,
-                          depth=depth,
-                          camera_poses=T_camera_in_link0,
-                          K_matrices=K,
-                          state=p_ee_in_link0,
-                          rotation_mode=rotation_mode)
-    
-            
-        rgb_base = demo.pop(f'rgb_base').transpose([2, 0, 1]) * 1.0
-        depth_base = demo.pop(f'depth_base')
 
-        obs_base = preproc_obs(rgb=rgb_base,
-                               depth=depth_base,
-                               camera_poses=T_camera_in_link0,
-                               K_matrices=K,
-                               state=p_ee_in_link0,
-                               rotation_mode=rotation_mode)
-        
-        obs['rgb'] = np.stack([obs['rgb'], obs_base['rgb']], axis=0)
-        obs['depth'] = np.stack([obs['depth'], obs_base['depth']], axis=0)
+        obs = preproc_obs(rgb=rgb_wrist,
+                    depth=depth_wrist,
+                    rgb_base=rgb_base,
+                    depth_base=depth_base,
+                    camera_poses=T_camera_in_link0,
+                    K_matrices=K_wrist,
+                    state=p_ee_in_link0,
+                    rotation_mode=rotation_mode)
 
         curr_ts['obs'] = obs
 
@@ -210,12 +202,11 @@ def convert_single_demo(source_dir,
 
         demo_stack = [curr_ts_wrapped] + demo_stack
 
-    if cleanup_gripper: # convert first repeated instance of 'closed', 'closed', ... to 'open', 'open', ... (i.e. start the demo as open)
-        for curr_ts in demo_stack:
-            if curr_ts[f'traj_{i}']['actions'][7] == 0.0:
-                break
-            else:
-                curr_ts[f'traj_{i}']['actions'][7] = 0.0
+    for curr_ts in demo_stack:
+        if curr_ts[f'traj_{i}']['actions'][7] == 0.0:
+            break
+        else:
+            curr_ts[f'traj_{i}']['actions'][7] = 0.0
 
     demo_dict = DictArray.stack(demo_stack)
     GDict.to_hdf5(demo_dict, os.path.join(traj_output_dir + "", f'traj_{i}.h5'))
@@ -283,7 +274,7 @@ def plot_in_grid(vals, save_path):
     plt.savefig(save_path)
     plt.close()
 
-    
+
     fig = plt.figure(figsize=(20, 10))
     ax = fig.add_subplot(141, projection='3d')
     for b in range(B):
