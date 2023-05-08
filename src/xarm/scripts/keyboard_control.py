@@ -57,7 +57,7 @@ class KeyboardControl:
 
         self._ri = robot_utils.XArmROSRobotInterface(self._robot, namespace='')
         self._ri.update_robot_state()
-        self._gripper_state = "closed"
+        self._gripper_state = "open"
         self._robot.angle_vector(self._ri.potentio_vector())
 
         self.mouse_state = None
@@ -93,6 +93,7 @@ class KeyboardControl:
     def control(self):
         assert self.in_control, "control is not started"
         T_ee_in_link0 = None
+        self._gripper_state = "open"
         while self.in_control:
             if T_ee_in_link0 is None:
                 T_ee_in_link0 = (
@@ -185,12 +186,12 @@ class KeyboardControl:
                 pos=new_ee_pos, rot=new_ee_rot
             )
         )
-        
+
         self._ri.angle_vector(self._robot.angle_vector(), time=time)
 
         if wait_interp:
             self._ri.wait_interpolation()
-    
+
     def publish_control(self, T_ee_in_link0):
         # convert to a quaternion
         q = ttf.quaternion_from_matrix(T_ee_in_link0)
@@ -210,28 +211,28 @@ class KeyboardControl:
 
         self._control_pub.publish(transform_msg)
         self._gripper_pub.publish(self._gripper_state == "closed") # true if closed, false if open
- 
+
     def reset_robot_pose(self):
         robot_utils.recover_xarm_from_error()
         if self._gripper_state == "closed":
             self._ri.ungrasp()
             rospy.sleep(1)
             self._gripper_state = "open"
-        
+
         self._robot.reset_pose()
         self._ri.angle_vector(self._robot.angle_vector(), time=4)
         self._ri.wait_interpolation() # suitable angle vector to allow nicer random initializations
 
-        T_ee_link_0 = (self._robot.rarm.end_coords.worldcoords().T())
-        
-        reset_pos = T_ee_link_0[:3, 3] + np.random.uniform(low = [0.0, -0.05, -0.1], high = [0.1, 0.05, -0.0])
+        # T_ee_link_0 = (self._robot.rarm.end_coords.worldcoords().T())
 
-        reset_angle, reset_axis, _ = ttf.rotation_from_matrix(T_ee_link_0)
-        reset_angle += np.random.uniform(low = -np.pi/12, high = np.pi/12)
-        reset_axis += np.random.uniform(low = -0.005, high = 0.005, size=3)
-        reset_rot = ttf.rotation_matrix(reset_angle, reset_axis)[:3, :3]
-        
-        self.move_to_pose(reset_pos, reset_rot, wait_interp=True, time=1)
+        # reset_pos = T_ee_link_0[:3, 3] + np.random.uniform(low = [0.0, -0.05, -0.1], high = [0.1, 0.05, -0.0])
+
+        # reset_angle, reset_axis, _ = ttf.rotation_from_matrix(T_ee_link_0)
+        # reset_angle += np.random.uniform(low = -np.pi/12, high = np.pi/12)
+        # reset_axis += np.random.uniform(low = -0.005, high = 0.005, size=3)
+        # reset_rot = ttf.rotation_matrix(reset_angle, reset_axis)[:3, :3]
+
+        # self.move_to_pose(reset_pos, reset_rot, wait_interp=True, time=1)
 
         self.delta_button = 0
 
@@ -239,6 +240,7 @@ class KeyboardControl:
         #     self._ri.grasp()
         #     rospy.sleep(1)
         #     self._gripper_state = "closed"
+
 
     def read_spacemouse(self):
         while 1:
