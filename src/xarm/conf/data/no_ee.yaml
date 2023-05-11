@@ -2,4 +2,5 @@ ee_control: False
 scale_factor: "none"
 source_dir: ???
 cleanup_gripper: False
-rotation_mode: "aa"
+rotation_mode: "euler"
+vis: False
