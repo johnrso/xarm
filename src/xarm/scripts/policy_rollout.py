@@ -35,8 +35,9 @@ from simple_bc.utils.visualization_utils import make_grid_video_from_numpy
 
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use("Agg")
 
+matplotlib.use("Agg")
+np.set_printoptions(precision=3, suppress=True)
 from omegaconf import OmegaConf
 
 class Agent:
@@ -46,6 +47,7 @@ class Agent:
                  scale_factor,
                  ee_control,
                  rotation_mode,
+                 proprio,
                  traj=None,
                  device="cuda"):
 
@@ -58,7 +60,10 @@ class Agent:
         self.policy = policy
         self._ri = None
         self.device = device
-        self.T = self.encoder.num_frames        
+        self.T = self.encoder.num_frames
+        self.proprio = proprio
+
+        self.succ = None
 
         if traj is None:
             self.traj = None
@@ -206,7 +211,7 @@ class Agent:
 
         rgb_wrist = rgb_wrist.transpose(2, 0, 1) * 1.0
         rgb_base = rgb_base.transpose([2, 0, 1]) * 1.0
-         
+
         obs = preproc_obs(rgb=rgb_wrist,
                           depth=depth_wrist,
                           rgb_base=rgb_base,
@@ -253,6 +258,8 @@ class Agent:
     def reset(self):
         self.kill = False
         self.actions = []
+        self.policy.reset()
+        print('policy reset')
         ret = self._reset()
         while robot_utils.is_xarm_in_error():
             ret = self._reset()
@@ -310,17 +317,13 @@ class Agent:
             action = next(self.traj)
         else:
             with torch.no_grad():
-                    # t = time.time()
-                    # from tqdm import tqdm
-                    # for _ in tqdm(range(20)):
-                    action, _ = self.policy(self.encoder(obs))
-                    # action = torch.zeros(8).unsqueeze(0).to(self.device)
-                    action = action.squeeze(0).cpu().numpy()
-                    print('date: ', datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'action: ', action)
-                    # tot = time.time() - t
-
-                    # print(f"avg time: {tot/20}")
+                if not self.proprio:
+                    obs['state'] = torch.zeros_like(obs['state'])
+                action = self.policy.act(self.encoder(obs))
+                if len(action.shape) > 1:
+                    action = action[0]
         self.actions.append(action)
+
         act = {}
         act["control"] = action[:7]
         act["gripper"] = action[7] > 0.5
@@ -330,11 +333,7 @@ class Agent:
         """
         control is delta position and delta quaternion.
         """
-
         control = control * self.scale_factor
-
-        # print(control)
-
         if self.rotation_mode == "quat":
             pose_ee = Pose.from_quaternion(*p_ee_in_link0)
             control_pose = Pose.from_quaternion(*control)
@@ -346,7 +345,7 @@ class Agent:
             control_pose = Pose.from_euler(*control)
         else:
             raise NotImplementedError
-        
+
         final_pose = compute_forward_action(pose_ee,
                                             control_pose,
                                             ee_control=self.ee_control)
@@ -379,25 +378,29 @@ class Agent:
             return
 
         vid = vid.transpose(0, 3, 1, 2)
-        success = input(f"last trial was a success? (y/n) ")
-        if success == 'y':
+        if self.succ == 'y':
             success = 1
+        elif self.succ == 'q':
+            self.vid = []
+            self.succ = None
+            return
         else:
             success = 0
 
+        self.succ = None
         log_dict["video"] = wandb.Video(vid[::4], fps=30, format="mp4")
         log_dict["success"] = success
 
         if self.wandb:
             wandb.log(log_dict, step=self.num_iter)
 
-        self.all_vid.append(vid.transpose(0, 2, 3, 1))
         self.vid = []
+        self.all_vid.append(vid.transpose(0, 2, 3, 1))
         self.num_iter += 1
 
+        return success
+
     def close(self):
-        self.vid = []
-        self.save_vid()
         if self.wandb:
             all_vid = self.all_vid[:]
             make_grid_video_from_numpy(all_vid, 5, f"{wandb.run.dir}/all_vid.mp4", speedup=8)
@@ -409,8 +412,9 @@ class Agent:
         if self.wandb:
             wandb.finish()
 
-    def raise_error(self):
+    def raise_error(self, key):
         self.kill = True
+        self.succ = key
 
 def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
     assert tag is not None, "tag is required"
@@ -423,12 +427,14 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
 
     pretty_print_cfg(train_config.encoder)
     pretty_print_cfg(train_config.policy)
-    
+
     assert pol_ckpt is not None and enc_ckpt is not None, "ckpt is required"
     encoder = Encoder.build_encoder(train_config.encoder).to(device).eval()
     policy = Policy.build_policy(encoder.out_shape,
                                  train_config.policy,
                                  train_config.encoder).to(device).eval()  # Updated shape
+    if policy.num_bins != -1:
+        policy.load_kmeans_cluster(task=train_config.task, k=policy.num_bins)
 
     policy.load_state_dict(torch.load(pol_ckpt))
     encoder.load_state_dict(torch.load(enc_ckpt))
@@ -445,25 +451,26 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
     if traj is None:
         wandb.init(project="internet-manipulation-test", name=tag)
 
-    agent = Agent(encoder, policy, scale_factor, ee_control, rotation_mode, traj)
+    agent = Agent(encoder, policy, scale_factor, ee_control, rotation_mode, proprio, traj)
 
     r = rospy.Rate(5)
     control_pub = rospy.Publisher("/control/status", Bool, queue_size=1)
 
     def on_press(key):
         try:
-            if key.char == "q":
-                agent.raise_error()
+            if key.char in "qyn":
+                agent.raise_error(key.char)
                 return False
         except AttributeError:
             pass
-    
+
+    succ = []
     while True:
         obs = agent.reset()
         steps = 0
         listener = keyboard.Listener(on_press=on_press)
         listener.start()
-        print(f"begin trial; press q to quit")
+        print(f"begin trial; press q to discard, y for success, and anything else for failure")
         while not rospy.is_shutdown():
             try:
                 action = agent.act(obs)
@@ -471,15 +478,23 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
                 obs = agent.step(action)
                 control_pub.publish(True)
             except RuntimeError as e:
+                print(e)
                 break
             steps += 1
             if agent.kill:
                 break
-        agent.save_vid()
-
-        kill = input("kill? (y/n) ")
-        if kill == 'y':
+        val = agent.save_vid()
+        if val is not None:
+            succ.append(val)
+        if len(succ) == 0:
+            m = 0
+        else:
+            m = np.mean(succ)
+        kill = input(f"\nkill? (y/n) succ rate = {m}: ")
+        if kill[-1] == 'y':
+            print(f"\nsuccess rate: {np.mean(succ)} ({len(succ)} trials, {np.sum(succ)} successes)")
             rospy.signal_shutdown("done")
+            exit(0)
 
 if __name__ == "__main__":
     import argparse

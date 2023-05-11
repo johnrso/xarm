@@ -27,10 +27,7 @@ def merge(folders, output):
     print(f'About to merge {i} files into {output}.')
     with mp.Pool(10) as pool:
         pool.starmap(copy_file, args)
-
-    # finish
     print(f'Finished merging {i} files into {output}')
-
 
 def copy_file(old_fn, new_fn):
     shutil.copyfile(old_fn, new_fn)

@@ -265,7 +265,7 @@ def plot_in_grid(vals, save_path):
         for i in range(N):
             T = curr.shape[0]
             # give them transparency
-            axes[i // 4, i % 4].scatter(np.arange(T), curr[:, i], alpha=0.5)
+            axes[i // 4, i % 4].plot(np.arange(T), curr[:, i], alpha=0.5)
 
     for i in range(N):
         axes[i // 4, i % 4].set_title(f"Dim {i}")

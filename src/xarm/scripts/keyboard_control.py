@@ -10,6 +10,8 @@ import numpy as np
 import pyspacemouse
 import skrobot
 
+np.set_printoptions(precision=3, suppress=True)
+
 import tf.transformations as ttf
 from geometry_msgs.msg import TransformStamped
 from std_msgs.msg import Bool
@@ -18,12 +20,13 @@ import xarm_utils.robot_utils as robot_utils
 
 @click.command()
 @click.option('--rotation-mode', default='euler', help='Rotation mode: rpy or euler')
-@click.option('--angle-scale', default=0.1, help='Angle scale')
+@click.option('--angle-scale', default=0.15, help='Angle scale')
 @click.option('--translation-scale', default=0.04, help='Translation scale')
 @click.option('--invert-control/--no-invert-control', is_flag=True, default=True, help='Invert control')
 @click.option('--control-hz', default=5, help='Control frequency')
-def main(rotation_mode, angle_scale, translation_scale, invert_control, control_hz):
-    kc = KeyboardControl(rotation_mode, angle_scale, translation_scale, invert_control, control_hz)
+@click.option('--alpha', default=0.5, help='Alpha')
+def main(rotation_mode, angle_scale, translation_scale, invert_control, control_hz, alpha):
+    kc = KeyboardControl(rotation_mode, angle_scale, translation_scale, invert_control, control_hz, alpha)
 
 class KeyboardControl:
     def __init__(self,
@@ -31,7 +34,8 @@ class KeyboardControl:
                 angle_scale: float = 0.1,
                 translation_scale: float = 0.02,
                 invert_control: bool = True,
-                control_hz: float = 5
+                control_hz: float = 5,
+                alpha: float = 0.5
             ):
 
         print('Rotation mode:', rotation_mode)
@@ -60,7 +64,11 @@ class KeyboardControl:
         self._gripper_state = "open"
         self._robot.angle_vector(self._ri.potentio_vector())
 
-        self.mouse_state = None
+        self.next_mouse_state = None
+        self.next_mouse_state_arr = []
+        self.all_actions = []
+        self._alpha = alpha # exponential smoothing parameter
+        self.i = 0
         self.delta_button = 0
         success = pyspacemouse.open()
         if not success:
@@ -94,6 +102,7 @@ class KeyboardControl:
         assert self.in_control, "control is not started"
         T_ee_in_link0 = None
         self._gripper_state = "open"
+        self.mouse_state_arr = np.zeros(6)
         while self.in_control:
             if T_ee_in_link0 is None:
                 T_ee_in_link0 = (
@@ -101,10 +110,11 @@ class KeyboardControl:
                 )
                 continue
 
-            if self.mouse_state.buttons[0] == 1 and self.mouse_state.buttons[1] == 1:
+            if self.next_mouse_state.buttons[0] == 1 and self.next_mouse_state.buttons[1] == 1:
                 # end control
                 print("ending control and discarding demo")
                 self.in_control = False
+                self.all_actions = []
                 self._pub.publish(True)
                 continue
             elif self.delta_button == 1 and self._gripper_state == "open":
@@ -119,50 +129,52 @@ class KeyboardControl:
                 self._gripper_state = "open"
                 with self.state_lock:
                     self.delta_button = False
-            elif self.mouse_state.buttons[1] == 1:
+            elif self.next_mouse_state.buttons[1] == 1:
                 # end control
                 print("ending control and saving demo")
+
+                import matplotlib.pyplot as plt
+                T = len(self.all_actions)
+                # 6 subfigures in 1x6. plot each dimension of self.all_actions
+                fig, axs = plt.subplots(1, 6, figsize=(20, 5))
+                for i in range(6):
+                    axs[i].plot(np.arange(T), np.array(self.all_actions)[:, i])
+                    axs[i].set_title(f"dim {i}")
+                plt.savefig(f"demo_{self.i}_alpha_{self._alpha}.png")
+
+                print(f"saved demo_{self.i}_alpha_{self._alpha}.png")
+                self.i += 1
+                self.all_actions = []
                 self.in_control = False
                 self._pub.publish(False)
                 self.reset_robot_pose()
 
                 continue
 
+            self.mouse_state_arr = self._alpha * self.next_mouse_state_arr + (1 - self._alpha) * self.mouse_state_arr
+            self.all_actions.append(self.mouse_state_arr)
+            tx, ty, tz, r, p, y = self.mouse_state_arr
+
             ee_pos = T_ee_in_link0[:3, 3]
             ee_rot = T_ee_in_link0[:3, :3]
 
             trans_transform = np.eye(4)
-            trans_transform[:3, 3] = np.array([self.mouse_state.y,
-                                               -self.mouse_state.x,
-                                               self.mouse_state.z]) * self._translation_scale
-
-            r, p, y = self.mouse_state.roll, self.mouse_state.pitch, self.mouse_state.yaw
-
-
-            def abs_scale(x):
-                sgn = np.sign(x)
-                abs_x = abs(x)
-
-                return sgn * (abs_x - self._rpy_deadzone) / (1 - self._rpy_deadzone)
-
-            r = 0 if abs(r) < self._rpy_deadzone else abs_scale(r)
-            p = 0 if abs(p) < self._rpy_deadzone else abs_scale(p)
-            y = 0 if abs(y) < self._rpy_deadzone else abs_scale(y)
+            trans_transform[:3, 3] = np.array([ty,-tx,tz]) * self._translation_scale
 
             # break rot_transform into each axis
             rot_transform_x = np.eye(4)
             rot_transform_x[:3, :3] = ttf.quaternion_matrix(
-                ttf.quaternion_from_euler(-self.mouse_state.roll * self._angle_scale, 0, 0)
+                ttf.quaternion_from_euler(-r * self._angle_scale, 0, 0)
             )[:3, :3]
 
             rot_transform_y = np.eye(4)
             rot_transform_y[:3, :3] = ttf.quaternion_matrix(
-                ttf.quaternion_from_euler(0, -self.mouse_state.pitch * self._angle_scale, 0)
+                ttf.quaternion_from_euler(0, -p * self._angle_scale, 0)
             )[:3, :3]
 
             rot_transform_z = np.eye(4)
             rot_transform_z[:3, :3] = ttf.quaternion_matrix(
-                ttf.quaternion_from_euler(0, 0, self.mouse_state.yaw * self._angle_scale)
+                ttf.quaternion_from_euler(0, 0, y * self._angle_scale)
             )[:3, :3]
 
             rot_transform = rot_transform_x @ rot_transform_y @ rot_transform_z
@@ -244,14 +256,19 @@ class KeyboardControl:
 
     def read_spacemouse(self):
         while 1:
-            if self.mouse_state is None:
-                self.mouse_state = pyspacemouse.read()
+            if self.next_mouse_state is None:
+                ms = pyspacemouse.read()
+                self.next_mouse_state = ms
+                self.next_mouse_state_arr = np.array([ms.x, ms.y, ms.z, ms.roll, ms.pitch, ms.yaw])
                 continue
-            curr_button = self.mouse_state.buttons[0]
-            self.mouse_state = pyspacemouse.read()
+            curr_button = self.next_mouse_state.buttons[0]
+            ms = pyspacemouse.read()
+            self.next_mouse_state = ms
+            self.next_mouse_state_arr = np.array([ms.x, ms.y, ms.z, ms.roll, ms.pitch, ms.yaw])
+            
             if not self.delta_button:
                 with self.state_lock:
-                    self.delta_button = max(self.mouse_state.buttons[0] - curr_button, 0)
+                    self.delta_button = max(self.next_mouse_state.buttons[0] - curr_button, 0)
 
     def shutdown_hook(self):
         self._thread.join()
