@@ -227,6 +227,7 @@ class ObsRecorder:
         # get the number of demos in self._demo_dir
         if msg.data and self._control_started_at is None:
             rospy.loginfo("obs_recorder: recording started")
+            rospy.loginfo("Folder currently have {} demos".format(len(os.listdir(self._demo_dir))))
             self.len_traj = 0
             self._recorded_dir = self._demo_dir / datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
             self._recorded_dir.mkdir(parents=True, exist_ok=True)
@@ -242,6 +243,7 @@ class ObsRecorder:
             self._control_started_at = None
             rospy.loginfo_once("obs_recorder: record_flag received")
             rospy.loginfo("obs_recorder: recording deleted: num demos = %d" % num_demos)
+            rospy.loginfo("Remaining demos: {}".format(os.listdir(self._demo_dir)))
         elif not msg.data and self._control_started_at is not None:
             self._control_ended_at = rospy.Time.now()
             self._control_started_at = None
@@ -249,6 +251,7 @@ class ObsRecorder:
             num_demos = len(os.listdir(self._demo_dir))
             rospy.loginfo_once("obs_recorder: record_flag received")
             rospy.loginfo("obs_recorder: recording saved: num demos = %d" % num_demos)
+            rospy.loginfo("Current demo: {}".format(os.listdir(self._demo_dir)))
         else:
             rospy.loginfo("obs_recorder: recording flag ignored")
 

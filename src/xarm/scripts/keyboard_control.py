@@ -24,7 +24,7 @@ import xarm_utils.robot_utils as robot_utils
 @click.option('--translation-scale', default=0.04, help='Translation scale')
 @click.option('--invert-control/--no-invert-control', is_flag=True, default=True, help='Invert control')
 @click.option('--control-hz', default=5, help='Control frequency')
-@click.option('--alpha', default=0.5, help='Alpha')
+@click.option('--alpha', default=1.0, help='Alpha')
 def main(rotation_mode, angle_scale, translation_scale, invert_control, control_hz, alpha):
     kc = KeyboardControl(rotation_mode, angle_scale, translation_scale, invert_control, control_hz, alpha)
 
@@ -152,6 +152,13 @@ class KeyboardControl:
                 continue
 
             self.mouse_state_arr = self._alpha * self.next_mouse_state_arr + (1 - self._alpha) * self.mouse_state_arr
+            # Suppress small values on other dimensions when control is high in one dimension
+            
+            if np.max(np.abs(self.mouse_state_arr)) > 0.1:
+                self.mouse_state_arr[np.abs(self.mouse_state_arr) < 0.05] = 0
+            # Add noise to the mouse state
+            self.mouse_state_arr += np.random.normal(0, 0.02, 6)
+            print('mouse_state_arr', self.mouse_state_arr)
             self.all_actions.append(self.mouse_state_arr)
             tx, ty, tz, r, p, y = self.mouse_state_arr
 
