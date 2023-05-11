@@ -147,7 +147,7 @@ def convert_single_demo(source_dir,
         depth_wrist = demo.pop(f'depth_{view}')
         rgb_base = demo.pop(f'rgb_base').transpose([2, 0, 1]) * 1.0
         depth_base = demo.pop(f'depth_base')
-        
+
         K_wrist = demo.pop(f'K_{view}')
         T_camera_in_link0 = demo.pop('T_camera_in_link0')
         p_ee_in_link0 = demo.pop('p_ee_in_link0')

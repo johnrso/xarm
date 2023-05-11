@@ -20,11 +20,11 @@ import xarm_utils.robot_utils as robot_utils
 
 @click.command()
 @click.option('--rotation-mode', default='euler', help='Rotation mode: rpy or euler')
-@click.option('--angle-scale', default=0.1, help='Angle scale')
-@click.option('--translation-scale', default=0.04, help='Translation scale')
+@click.option('--angle-scale', default=0.05, help='Angle scale')
+@click.option('--translation-scale', default=0.02, help='Translation scale')
 @click.option('--invert-control/--no-invert-control', is_flag=True, default=True, help='Invert control')
 @click.option('--control-hz', default=5, help='Control frequency')
-@click.option('--alpha', default=1.0, help='Alpha')
+@click.option('--alpha', default=1., help='Alpha')
 def main(rotation_mode, angle_scale, translation_scale, invert_control, control_hz, alpha):
     kc = KeyboardControl(rotation_mode, angle_scale, translation_scale, invert_control, control_hz, alpha)
 
@@ -133,16 +133,16 @@ class KeyboardControl:
                 # end control
                 print("ending control and saving demo")
 
-                import matplotlib.pyplot as plt
-                T = len(self.all_actions)
-                # 6 subfigures in 1x6. plot each dimension of self.all_actions
-                fig, axs = plt.subplots(1, 6, figsize=(20, 5))
-                for i in range(6):
-                    axs[i].plot(np.arange(T), np.array(self.all_actions)[:, i])
-                    axs[i].set_title(f"dim {i}")
-                plt.savefig(f"demo_{self.i}_alpha_{self._alpha}.png")
+                # import matplotlib.pyplot as plt
+                # T = len(self.all_actions)
+                # # 6 subfigures in 1x6. plot each dimension of self.all_actions
+                # fig, axs = plt.subplots(1, 6, figsize=(20, 5))
+                # for i in range(6):
+                #     axs[i].plot(np.arange(T), np.array(self.all_actions)[:, i])
+                #     axs[i].set_title(f"dim {i}")
+                # plt.savefig(f"demo_{self.i}_alpha_{self._alpha}.png")
 
-                print(f"saved demo_{self.i}_alpha_{self._alpha}.png")
+                # print(f"saved demo_{self.i}_alpha_{self._alpha}.png")
                 self.i += 1
                 self.all_actions = []
                 self.in_control = False
