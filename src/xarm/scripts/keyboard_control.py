@@ -20,7 +20,7 @@ import xarm_utils.robot_utils as robot_utils
 
 @click.command()
 @click.option('--rotation-mode', default='euler', help='Rotation mode: rpy or euler')
-@click.option('--angle-scale', default=0.15, help='Angle scale')
+@click.option('--angle-scale', default=0.1, help='Angle scale')
 @click.option('--translation-scale', default=0.04, help='Translation scale')
 @click.option('--invert-control/--no-invert-control', is_flag=True, default=True, help='Invert control')
 @click.option('--control-hz', default=5, help='Control frequency')
