@@ -25,7 +25,6 @@ import time
 
 from xarm_utils.conversion_utils import compute_forward_action, preproc_obs, Pose, to_torch, to_numpy
 from xarm_utils import robot_utils
-import click
 import wandb
 import h5py
 from pynput import keyboard
@@ -491,8 +490,13 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
         else:
             m = np.mean(succ)
         kill = input(f"\nkill? (y/n) succ rate = {m}: ")
+
+        # press either q, y, or n (discard; log success, log failure)
+        # press y or n (y == stop experiments, n == continue)
+
         if kill[-1] == 'y':
-            print(f"\nsuccess rate: {np.mean(succ)} ({len(succ)} trials, {np.sum(succ)} successes)")
+
+            print(f"\nsuccess rate: {m} ({len(succ)} trials)")
             rospy.signal_shutdown("done")
             exit(0)
 

@@ -1,7 +1,8 @@
 # MODEL_NAME=0502/no_add_data/0624_0501_proprio_frame
-POLICY_SUFFIX=40
-MODEL_NAME=0510_impala_kmeans/0
-DATA_NAME=0429_place_bag_tj_black_red_conv_multiview_euler
+POLICY_SUFFIX=best
+MODEL_NAME=0510_red_cup
+DATA_NAME=0510_cup_stacking_table_30_conv_multiview_euler
+# DATA_NAME=0429_place_bag_tj_black_red_conv_multiview_euler
 
 
 rosrun xarm policy_rollout.py \
