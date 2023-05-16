@@ -10,3 +10,4 @@ outputs/
 wandb/
 models
 dataset
+demo
