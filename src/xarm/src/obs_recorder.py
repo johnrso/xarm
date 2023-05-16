@@ -101,11 +101,24 @@ class ObsRecorder:
         )
         sync.registerCallback(self._demo_recording_callback)
         rospy.loginfo("obs_recorder: node started")
+
+        # create a log of demos. this is a text file "log.txt."
+        log_file = self._demo_dir / "log.txt"
+        if not log_file.exists():
+            log_file.touch()
+        log_msg = input("describe the demo set being collected. this will be written to the log file.\n")
+        # prepend the log_msg with the current time
+        log_msg = str(datetime.datetime.now()) + " " + log_msg
+        with open(log_file, "a") as f:
+            f.write(log_msg + "\n")
+
         while True:
             inp = input("d --> delete last recording\n")
             if inp == "d":
                 try:
                     demo_dirs = sorted(os.listdir(self._demo_dir))
+                    # remove anything that does not look like a datetime
+                    demo_dirs = [d for d in demo_dirs if d not in ["log.txt", "_conv"]]
                     to_remove = self._demo_dir / demo_dirs[-1]
 
                     # remove to_remove, and all files in it

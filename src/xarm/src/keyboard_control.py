@@ -158,7 +158,6 @@ class KeyboardControl:
                 self.mouse_state_arr[np.abs(self.mouse_state_arr) < 0.05] = 0
             # Add noise to the mouse state
             self.mouse_state_arr += np.random.normal(0, 0.02, 6)
-            print('mouse_state_arr', self.mouse_state_arr)
             self.all_actions.append(self.mouse_state_arr)
             tx, ty, tz, r, p, y = self.mouse_state_arr
 

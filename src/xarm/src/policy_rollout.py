@@ -448,8 +448,16 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
     print(f"args to agent: scale_factor: {scale_factor}, rotation_mode: {rotation_mode}, ee_control: {ee_control}, proprio: {proprio}")
 
     if traj is None:
-        wandb.init(project="internet-manipulation-test", name=tag)
-
+        save_dir = "/data/demo/"
+        save_dir = os.path.join(save_dir, tag)
+        os.makedirs(save_dir, exist_ok=True)
+        save_dir = os.path.join(save_dir, datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S"))
+        os.makedirs(save_dir, exist_ok=True)
+        
+        wandb.init(project="internet-manipulation-test", 
+                   name=tag,
+                   dir=save_dir)
+                   
     agent = Agent(encoder, policy, scale_factor, ee_control, rotation_mode, proprio, traj)
 
     r = rospy.Rate(5)
@@ -489,14 +497,11 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
             m = 0
         else:
             m = np.mean(succ)
+
         kill = input(f"\nkill? (y/n) succ rate = {m}: ")
-
-        # press either q, y, or n (discard; log success, log failure)
-        # press y or n (y == stop experiments, n == continue)
-
         if kill[-1] == 'y':
-
             print(f"\nsuccess rate: {m} ({len(succ)} trials)")
+            print(f"media can be found at {save_dir}")
             rospy.signal_shutdown("done")
             exit(0)
 
