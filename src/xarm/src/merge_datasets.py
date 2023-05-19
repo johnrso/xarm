@@ -6,7 +6,8 @@ import datetime
 @click.command()
 @click.argument('folders', nargs=-1)
 @click.option('--output', '-o', default='merged', help='Name of output folder')
-def merge(folders, output):
+@click.option('--num_per_folder', '-n', default=-1, help='Number of files to take from each folder')
+def merge(folders, output, num_per_folder):
     if os.path.exists(output):
         raise ValueError(f'{output} already exists. Please delete it first.')
     os.makedirs(output, exist_ok=True)
@@ -29,7 +30,9 @@ def merge(folders, output):
     args = []
     for folder in folders:
         # get all subfolders
-        for file in os.listdir(folder):
+        for j, file in enumerate(os.listdir(folder)):
+            if i == num_per_folder:
+                break
             if "conv" not in file:
                 old_fn = os.path.join(folder, file)
                 new_fn = os.path.join(output, file)

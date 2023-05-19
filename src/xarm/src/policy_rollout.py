@@ -47,6 +47,7 @@ class Agent:
                  ee_control,
                  rotation_mode,
                  proprio,
+                 use_depth=True,
                  traj=None,
                  device="cuda"):
 
@@ -61,6 +62,7 @@ class Agent:
         self.device = device
         self.T = self.encoder.num_frames
         self.proprio = proprio
+        self.use_depth = use_depth
 
         self.succ = None
 
@@ -318,6 +320,8 @@ class Agent:
             with torch.no_grad():
                 if not self.proprio:
                     obs['state'] = torch.zeros_like(obs['state'])
+                if not self.use_depth:
+                    obs['depth'] = torch.zeros_like(obs['depth'])
                 action = self.policy.act(self.encoder(obs))
                 if len(action.shape) > 1:
                     action = action[0]
@@ -443,9 +447,14 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
     rotation_mode = conv_config.rotation_mode
     ee_control = conv_config.ee_control
     proprio = train_config.dataset.aug_cfg.use_proprio
+    try:
+        use_depth = train_config.dataset.aug_cfg.use_depth
+    except:
+        use_depth = True
 
-
-    print(f"args to agent: scale_factor: {scale_factor}, rotation_mode: {rotation_mode}, ee_control: {ee_control}, proprio: {proprio}")
+    print(f"args to agent: scale_factor: {scale_factor}, \
+          rotation_mode: {rotation_mode}, ee_control: {ee_control}, \
+          proprio: {proprio}, use_depth: {use_depth}")
 
     if traj is None:
         save_dir = "/data/demo/"
@@ -453,12 +462,12 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
         os.makedirs(save_dir, exist_ok=True)
         save_dir = os.path.join(save_dir, datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S"))
         os.makedirs(save_dir, exist_ok=True)
-        
-        wandb.init(project="internet-manipulation-test", 
+
+        wandb.init(project="internet-manipulation-test",
                    name=tag,
                    dir=save_dir)
-                   
-    agent = Agent(encoder, policy, scale_factor, ee_control, rotation_mode, proprio, traj)
+
+    agent = Agent(encoder, policy, scale_factor, ee_control, rotation_mode, proprio, use_depth, traj)
 
     r = rospy.Rate(5)
     control_pub = rospy.Publisher("/control/status", Bool, queue_size=1)
