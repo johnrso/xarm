@@ -37,6 +37,9 @@ def preproc_obs(rgb, depth, camera_poses, K_matrices, state, rotation_mode='quat
     rgb = cv2.resize(rgb, (224, 224), interpolation=cv2.INTER_LINEAR)
     rgb = rgb.transpose([2, 0, 1])
 
+    # save as a uint8 for memory efficiency. it is currently a float64 in 0-255.
+    rgb = rgb.astype(np.uint8)
+
     if rgb_base is not None:
         rgb_base = rgb_base.transpose([1, 2, 0])
         rgb_base = cv2.resize(rgb_base, (224, 224), interpolation=cv2.INTER_LINEAR)

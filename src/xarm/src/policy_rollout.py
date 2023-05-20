@@ -507,7 +507,7 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
         else:
             m = np.mean(succ)
 
-        kill = input(f"\nkill? (y/n) succ rate = {m}: ")
+        kill = input(f"\nkill? (y/n) succ rate = {m}, {len(succ)} trials thus far): ")
         if kill[-1] == 'y':
             print(f"\nsuccess rate: {m} ({len(succ)} trials)")
             print(f"media can be found at {save_dir}")
