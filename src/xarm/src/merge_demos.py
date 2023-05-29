@@ -6,7 +6,8 @@ import multiprocessing as mp
 @click.command()
 @click.argument('folders', nargs=-1)
 @click.option('--output', '-o', default='merged', help='Name of output folder')
-def merge(folders, output):
+@click.option('--num_per_folder', '-n', default=-1, help='Number of files to take from each folder')
+def merge(folders, output, num_per_folder):
     if not os.path.exists(output):
         os.makedirs(output, exist_ok=True)
     token_folder = os.path.join(output, 'none')
@@ -16,7 +17,9 @@ def merge(folders, output):
 
     args = []
     for folder in folders:
-        for file in os.listdir(folder):
+        for j, file in enumerate(os.listdir(folder)):
+            if j == num_per_folder:
+                break
             if file.endswith(".h5"):
                 # copy the file to the output folder
                 old_fn = os.path.join(folder, file)

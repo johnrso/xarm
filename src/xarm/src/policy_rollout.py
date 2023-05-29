@@ -5,6 +5,7 @@ import sys
 import time
 
 import numpy as np
+import torch
 from gdict.data import GDict
 
 np.set_printoptions(precision=3, suppress=True)
@@ -36,8 +37,18 @@ import matplotlib.pyplot as plt
 import matplotlib
 
 matplotlib.use("Agg")
+from einops import rearrange
 np.set_printoptions(precision=3, suppress=True)
 from omegaconf import OmegaConf
+
+def process_attn(attn):
+    v, d, h, w = attn.shape
+    attn = rearrange(attn, "v d h w -> v d (h w)")
+    attn = torch.softmax(attn / .1, dim=-1)
+    attn = attn - attn.min(dim=-1, keepdim=True)[0]
+    attn = attn / attn.max(dim=-1, keepdim=True)[0]
+    attn = rearrange(attn, "v d (h w) -> (v h) (d w)", h=h, w=w)
+    return attn
 
 class Agent:
     def __init__(self,
@@ -48,12 +59,17 @@ class Agent:
                  rotation_mode,
                  proprio,
                  use_depth=True,
+                 safe=False,
                  traj=None,
                  device="cuda"):
 
         self.scale_factor = scale_factor
 
         # TODO: fix later,
+        self.safe = safe
+
+        print(f"safe mode is {self.safe}")
+
         self.ee_control = ee_control
         self.rotation_mode = rotation_mode
         self.encoder = encoder
@@ -63,6 +79,7 @@ class Agent:
         self.T = self.encoder.num_frames
         self.proprio = proprio
         self.use_depth = use_depth
+        self.bridge = cv_bridge.CvBridge()
 
         self.succ = None
 
@@ -80,6 +97,8 @@ class Agent:
         self.vid = []
         self.all_vid = []
         self.actions = []
+        self.attns = []
+        self.successes = []
 
         self.num_iter = 0
 
@@ -129,6 +148,10 @@ class Agent:
         )
         self._sub_depth_base = message_filters.Subscriber(
             "/base_camera/aligned_depth_to_color/image_raw", Image
+        )
+
+        self._pub_attn_map = rospy.Publisher(
+            "/attn_map", Image, queue_size=1
         )
 
         # proprio
@@ -182,11 +205,10 @@ class Agent:
         T_camera_in_link0 = ttf.quaternion_matrix(quaternion)
         T_camera_in_link0[:3, 3] = position
 
-        bridge = cv_bridge.CvBridge()
 
         # wrist camera processing
-        rgb_wrist = bridge.imgmsg_to_cv2(rgb_msg_wrist, desired_encoding="rgb8")
-        depth_wrist = bridge.imgmsg_to_cv2(depth_msg_wrist)
+        rgb_wrist = self.bridge.imgmsg_to_cv2(rgb_msg_wrist, desired_encoding="rgb8")
+        depth_wrist = self.bridge.imgmsg_to_cv2(depth_msg_wrist)
         assert rgb_wrist.dtype == np.uint8 and rgb_wrist.ndim == 3
         assert depth_wrist.dtype == np.uint16 and depth_wrist.ndim == 2
         depth_wrist = depth_wrist.astype(np.float32) / 1000
@@ -194,8 +216,8 @@ class Agent:
         K_wrist = np.array(caminfo_msg_wrist.K).reshape(3, 3)
 
         # base camera processing
-        rgb_base = bridge.imgmsg_to_cv2(rgb_msg_base, desired_encoding="rgb8")
-        depth_base = bridge.imgmsg_to_cv2(depth_msg_base)
+        rgb_base = self.bridge.imgmsg_to_cv2(rgb_msg_base, desired_encoding="rgb8")
+        depth_base = self.bridge.imgmsg_to_cv2(depth_msg_base)
         assert rgb_base.dtype == np.uint8 and rgb_base.ndim == 3
         assert depth_base.dtype == np.uint16 and depth_base.ndim == 2
         depth_base = depth_base.astype(np.float32) / 1000
@@ -226,11 +248,10 @@ class Agent:
 
     def record_video(self, rgb_msg_wrist, rgb_msg_base):
         rospy.loginfo_once(f"recording video")
-        bridge = cv_bridge.CvBridge()
 
         # wrist camera processing
-        rgb_wrist = bridge.imgmsg_to_cv2(rgb_msg_wrist, desired_encoding="rgb8")
-        rgb_base = bridge.imgmsg_to_cv2(rgb_msg_base, desired_encoding="rgb8")
+        rgb_wrist = self.bridge.imgmsg_to_cv2(rgb_msg_wrist, desired_encoding="rgb8")
+        rgb_base = self.bridge.imgmsg_to_cv2(rgb_msg_base, desired_encoding="rgb8")
 
         H, W = rgb_wrist.shape[:2]
         sq = min(H, W)
@@ -259,6 +280,7 @@ class Agent:
     def reset(self):
         self.kill = False
         self.actions = []
+        self.attns = []
         self.policy.reset()
         print('policy reset')
         ret = self._reset()
@@ -270,14 +292,13 @@ class Agent:
     def _reset(self):
         robot_utils.recover_xarm_from_error()
         self._gripper_action_prev = 1  # open
-
-        self._ri.ungrasp()
         rospy.sleep(1)
 
         self._robot.reset_pose()
-        self._ri.angle_vector(self._robot.angle_vector(), time=4)
+        self._ri.angle_vector(self._robot.angle_vector(), time=2.5)
         self._ri.wait_interpolation()
 
+        self._ri.ungrasp()
         self._obs = []
         self._current_obs = None
 
@@ -322,9 +343,16 @@ class Agent:
                     obs['state'] = torch.zeros_like(obs['state'])
                 if not self.use_depth:
                     obs['depth'] = torch.zeros_like(obs['depth'])
-                action = self.policy.act(self.encoder(obs))
-                if len(action.shape) > 1:
-                    action = action[0]
+                action, info = self.policy.act(self.encoder(obs))
+                if "attn" in info:
+                    attn = info["attn"][0, -1]
+                    attn = process_attn(attn).cpu().numpy()
+                    attn = np.stack([attn, attn, attn], axis=-1)
+                    attn = (attn * 255).astype(np.uint8)
+                    attn_msg = self.bridge.cv2_to_imgmsg(attn, encoding="rgb8")
+
+                    self._pub_attn_map.publish(attn_msg)
+                    self.attns.append(attn)
         self.actions.append(action)
 
         act = {}
@@ -352,6 +380,9 @@ class Agent:
         final_pose = compute_forward_action(pose_ee,
                                             control_pose,
                                             ee_control=self.ee_control)
+        
+        if self.safe and final_pose.p[2] < 0.04:
+            final_pose.p[2] = 0.04
 
         return final_pose.to_44_matrix()
 
@@ -375,6 +406,7 @@ class Agent:
             log_dict["actions"] = wandb.Image(traj_img)
 
         vid = np.array(self.vid)
+        attns = np.array(self.attns)
 
         if len(vid) <= 30:
             print('discarding trial because it is too short')
@@ -391,8 +423,13 @@ class Agent:
             success = 0
 
         self.succ = None
-        log_dict["video"] = wandb.Video(vid[::4], fps=30, format="mp4")
+        log_dict["video"] = wandb.Video(vid, fps=30, format="mp4")
         log_dict["success"] = success
+        self.successes += [success]
+
+        if len(attns) > 0:
+            attns = attns.transpose(0, 3, 1, 2)
+            log_dict["attn"] = wandb.Video(attns, fps=30, format="mp4")
 
         if self.wandb:
             wandb.log(log_dict, step=self.num_iter)
@@ -410,6 +447,14 @@ class Agent:
             wandb.log({"all_vid": wandb.Video(f"{wandb.run.dir}/all_vid.mp4", fps=30, format="mp4")},
                       step=self.num_iter)
             print(f"saved video to {wandb.run.dir}/all_vid.mp4")
+
+            with open(f"{wandb.run.dir}/successes.txt", "w") as f:
+                for i, s in enumerate(self.successes):
+                    f.write(f"{i}: {s}\n")
+
+            wandb.save(f"{wandb.run.dir}/successes.txt")
+
+            print(f"saved successes to {wandb.run.dir}/successes.txt")
         if self._ri is not None:
             self._ri.ungrasp()
         if self.wandb:
@@ -419,7 +464,7 @@ class Agent:
         self.kill = True
         self.succ = key
 
-def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
+def main(train_config, conv_config, pol_ckpt, enc_ckpt, safe=False, traj=None, tag=None):
     assert tag is not None, "tag is required"
 
     from simple_bc._interfaces.encoder import Encoder
@@ -452,7 +497,7 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
     except:
         use_depth = True
 
-    print(f"args to agent: scale_factor: {scale_factor}, \
+    print(f"args to agent: scale_factor: {np.array(scale_factor)}, \
           rotation_mode: {rotation_mode}, ee_control: {ee_control}, \
           proprio: {proprio}, use_depth: {use_depth}")
 
@@ -467,7 +512,15 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
                    name=tag,
                    dir=save_dir)
 
-    agent = Agent(encoder, policy, scale_factor, ee_control, rotation_mode, proprio, use_depth, traj)
+    agent = Agent(encoder, 
+                  policy, 
+                  scale_factor, 
+                  ee_control, 
+                  rotation_mode, 
+                  proprio, 
+                  use_depth, 
+                  safe, 
+                  traj)
 
     r = rospy.Rate(5)
     control_pub = rospy.Publisher("/control/status", Bool, queue_size=1)
@@ -508,12 +561,12 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, traj=None, tag=None):
             m = np.mean(succ)
 
         kill = input(f"\nkill? (y/n) succ rate = {m}, {len(succ)} trials thus far): ")
-        if kill[-1] == 'y':
+        if len(kill) == 0 or kill[-1] == 'y':
             print(f"\nsuccess rate: {m} ({len(succ)} trials)")
             print(f"media can be found at {save_dir}")
             rospy.signal_shutdown("done")
             exit(0)
-
+        
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
@@ -523,5 +576,6 @@ if __name__ == "__main__":
     parser.add_argument("--enc_ckpt", type=str, default=None)
     parser.add_argument("--traj", type=str, default=None)
     parser.add_argument("--tag", type=str, default=None)
+    parser.add_argument("--safe", action="store_true")
     args = parser.parse_args()
     main(**vars(args))
