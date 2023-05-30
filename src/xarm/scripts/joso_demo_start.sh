@@ -1,0 +1,1 @@
+rosrun xarm keyboard_control.py --translation-scale .05 --angle-scale .1
