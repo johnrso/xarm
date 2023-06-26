@@ -31,7 +31,7 @@ def merge(folders, output, num_per_folder):
     for folder in folders:
         # get all subfolders
         for j, file in enumerate(os.listdir(folder)):
-            if i == num_per_folder:
+            if j == num_per_folder:
                 break
             if "conv" not in file:
                 old_fn = os.path.join(folder, file)

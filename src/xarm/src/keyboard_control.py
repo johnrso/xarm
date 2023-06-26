@@ -25,8 +25,9 @@ import xarm_utils.robot_utils as robot_utils
 @click.option('--invert-control/--no-invert-control', is_flag=True, default=True, help='Invert control')
 @click.option('--control-hz', default=5, help='Control frequency')
 @click.option('--alpha', default=1., help='Alpha')
-def main(rotation_mode, angle_scale, translation_scale, invert_control, control_hz, alpha):
-    kc = KeyboardControl(rotation_mode, angle_scale, translation_scale, invert_control, control_hz, alpha)
+@click.option('--safe', is_flag=True, default=False, help='Safe mode limits the range of motion')
+def main(rotation_mode, angle_scale, translation_scale, invert_control, control_hz, alpha, safe):
+    kc = KeyboardControl(rotation_mode, angle_scale, translation_scale, invert_control, control_hz, alpha, safe)
 
 class KeyboardControl:
     def __init__(self,
@@ -35,7 +36,8 @@ class KeyboardControl:
                 translation_scale: float = 0.02,
                 invert_control: bool = True,
                 control_hz: float = 5,
-                alpha: float = 0.5
+                alpha: float = 0.5,
+                safe: bool = False
             ):
 
         print('Rotation mode:', rotation_mode)
@@ -54,6 +56,7 @@ class KeyboardControl:
         self._translation_scale = translation_scale
         self._rpy_deadzone = 0.9 # the raw value must be greater than this to rotate the EE.
         self._robot = robot_utils.XArm()
+        self.safe = safe
 
         self._control_pub = rospy.Publisher("/control/command", TransformStamped, queue_size=1)
         self._gripper_pub = rospy.Publisher("/control/gripper", Bool, queue_size=1)
@@ -190,6 +193,9 @@ class KeyboardControl:
                 new_ee_rot = ee_rot @ rot_transform[:3, :3]
             elif self._rotation_mode == "euler":
                 new_ee_rot = rot_transform[:3, :3] @ ee_rot
+
+            if self.safe and new_ee_pos[2] < 0.05:
+                new_ee_pos[2] = 0.05
 
             T_ee_in_link0[:3, 3] = new_ee_pos
             T_ee_in_link0[:3, :3] = new_ee_rot

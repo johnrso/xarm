@@ -6,6 +6,7 @@ import time
 
 import numpy as np
 import torch
+import einops
 from gdict.data import GDict
 
 np.set_printoptions(precision=3, suppress=True)
@@ -95,6 +96,7 @@ class Agent:
             self.wandb = True
 
         self.vid = []
+        self.depth_vid = []
         self.all_vid = []
         self.actions = []
         self.attns = []
@@ -154,6 +156,10 @@ class Agent:
             "/attn_map", Image, queue_size=1
         )
 
+        self._pub_obs = rospy.Publisher(
+            "/obs", Image, queue_size=1
+        )
+
         # proprio
         self._sub_joint = message_filters.Subscriber(
             "/joint_states", JointState
@@ -178,6 +184,8 @@ class Agent:
             [
                 self._sub_rgb_wrist,
                 self._sub_rgb_base,
+                self._sub_depth_wrist,
+                self._sub_depth_base,
             ],
             slop=0.1,
             queue_size=1,
@@ -246,21 +254,29 @@ class Agent:
 
         self._current_obs = GDict(obs).unsqueeze(0)
 
-    def record_video(self, rgb_msg_wrist, rgb_msg_base):
+    def record_video(self, rgb_msg_wrist, rgb_msg_base, depth_msg_wrist, depth_msg_base):
         rospy.loginfo_once(f"recording video")
 
         # wrist camera processing
         rgb_wrist = self.bridge.imgmsg_to_cv2(rgb_msg_wrist, desired_encoding="rgb8")
-        rgb_base = self.bridge.imgmsg_to_cv2(rgb_msg_base, desired_encoding="rgb8")
+        rgb_base = self.bridge.imgmsg_to_cv2(rgb_msg_base, desired_encoding="rgb8")\
 
-        H, W = rgb_wrist.shape[:2]
-        sq = min(H, W)
-        rgb_wrist = rgb_wrist[:sq, :sq, :]
-        rgb_base = rgb_base[:sq, :sq, :]
+        depth_wrist = self.bridge.imgmsg_to_cv2(depth_msg_wrist)
+        depth_base = self.bridge.imgmsg_to_cv2(depth_msg_base)
+
+        assert rgb_wrist.dtype == np.uint8 and rgb_wrist.ndim == 3
+        assert depth_wrist.dtype == np.uint16 and depth_wrist.ndim == 2
+        depth_wrist = depth_wrist.astype(np.float32) / 1000
+        depth_base = depth_base.astype(np.float32) / 1000
+
+        depth_wrist = rearrange(depth_wrist, 'h w -> h w ()')
+        depth_base = rearrange(depth_base, 'h w -> h w ()')
 
         vid_frame = np.concatenate([rgb_wrist, rgb_base], axis=1)
+        depth_frame = np.concatenate([depth_wrist, depth_base], axis=1)
 
         self.vid.append(vid_frame)
+        self.depth_vid.append(depth_frame)
 
     def get_obs(self):
         while self._current_obs is None:
@@ -304,6 +320,7 @@ class Agent:
 
         obs = self.get_obs()
         self.vid = []
+        self.depth_vid = []
 
         return obs
 
@@ -326,9 +343,6 @@ class Agent:
         av = self._robot.rarm.inverse_kinematics(target_coords)
 
         ik_fail = av is False
-        if ik_fail:
-            raise RuntimeError("IK failed. reset")
-
         if not ik_fail:
             t = time.time()
             self._ri.angle_vector(self._robot.angle_vector(), time=.5)
@@ -349,10 +363,18 @@ class Agent:
                     attn = process_attn(attn).cpu().numpy()
                     attn = np.stack([attn, attn, attn], axis=-1)
                     attn = (attn * 255).astype(np.uint8)
+
                     attn_msg = self.bridge.cv2_to_imgmsg(attn, encoding="rgb8")
 
                     self._pub_attn_map.publish(attn_msg)
                     self.attns.append(attn)
+
+            pub_img = einops.rearrange(obs['rgb'][0, -1], "v c h w -> h (v w) c")
+            pub_img = to_numpy(pub_img)
+            pub_img = (pub_img).astype(np.uint8)
+
+            pub_img_msg = self.bridge.cv2_to_imgmsg(pub_img, encoding="rgb8")
+            self._pub_obs.publish(pub_img_msg)
         self.actions.append(action)
 
         act = {}
@@ -380,9 +402,9 @@ class Agent:
         final_pose = compute_forward_action(pose_ee,
                                             control_pose,
                                             ee_control=self.ee_control)
-        
-        if self.safe and final_pose.p[2] < 0.04:
-            final_pose.p[2] = 0.04
+
+        if self.safe and final_pose.p[2] < 0.05:
+            final_pose.p[2] = 0.05
 
         return final_pose.to_44_matrix()
 
@@ -406,6 +428,7 @@ class Agent:
             log_dict["actions"] = wandb.Image(traj_img)
 
         vid = np.array(self.vid)
+        depth_vid = np.array(self.depth_vid)
         attns = np.array(self.attns)
 
         if len(vid) <= 30:
@@ -413,10 +436,13 @@ class Agent:
             return
 
         vid = vid.transpose(0, 3, 1, 2)
+        depth_vid = depth_vid.transpose(0, 3, 1, 2)
+
         if self.succ == 'y':
             success = 1
         elif self.succ == 'q':
             self.vid = []
+            self.depth_vid = []
             self.succ = None
             return
         else:
@@ -424,6 +450,9 @@ class Agent:
 
         self.succ = None
         log_dict["video"] = wandb.Video(vid, fps=30, format="mp4")
+        # log the depth as an np array
+        np.save(f"{wandb.run.dir}/depth_{self.num_iter}.npy", depth_vid)
+
         log_dict["success"] = success
         self.successes += [success]
 
@@ -435,6 +464,7 @@ class Agent:
             wandb.log(log_dict, step=self.num_iter)
 
         self.vid = []
+        self.depth_vid = []
         self.all_vid.append(vid.transpose(0, 2, 3, 1))
         self.num_iter += 1
 
@@ -512,14 +542,14 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, safe=False, traj=None, t
                    name=tag,
                    dir=save_dir)
 
-    agent = Agent(encoder, 
-                  policy, 
-                  scale_factor, 
-                  ee_control, 
-                  rotation_mode, 
-                  proprio, 
-                  use_depth, 
-                  safe, 
+    agent = Agent(encoder,
+                  policy,
+                  scale_factor,
+                  ee_control,
+                  rotation_mode,
+                  proprio,
+                  use_depth,
+                  safe,
                   traj)
 
     r = rospy.Rate(5)
@@ -534,12 +564,17 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, safe=False, traj=None, t
             pass
 
     succ = []
+    record_pub = rospy.Publisher("/record_demo", Bool, queue_size=1)
     while True:
         obs = agent.reset()
         steps = 0
+        input("press enter to begin trial")
+        agent.vid = []
+        agent.depth_vid = []
         listener = keyboard.Listener(on_press=on_press)
         listener.start()
         print(f"begin trial; press q to discard, y for success, and anything else for failure")
+        record_pub.publish(True)
         while not rospy.is_shutdown():
             try:
                 action = agent.act(obs)
@@ -553,7 +588,10 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, safe=False, traj=None, t
             if agent.kill:
                 break
         val = agent.save_vid()
-        if val is not None:
+        if val is None:
+            record_pub.publish(True)
+        else:
+            record_pub.publish(False)
             succ.append(val)
         if len(succ) == 0:
             m = 0
@@ -561,12 +599,12 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, safe=False, traj=None, t
             m = np.mean(succ)
 
         kill = input(f"\nkill? (y/n) succ rate = {m}, {len(succ)} trials thus far): ")
-        if len(kill) == 0 or kill[-1] == 'y':
+        if len(kill) != 0 and kill[-1] == 'y':
             print(f"\nsuccess rate: {m} ({len(succ)} trials)")
             print(f"media can be found at {save_dir}")
             rospy.signal_shutdown("done")
             exit(0)
-        
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()

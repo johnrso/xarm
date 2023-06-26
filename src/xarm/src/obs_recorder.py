@@ -22,11 +22,12 @@ from sensor_msgs.msg import CameraInfo, JointState, Image
 
 @click.command()
 @click.option('--demo-dir', default='/data/demo', help='Demo directory')
-def main(demo_dir):
-    ObsRecorder(demo_dir)
+@click.option('--record-act/--no-record-act', default=True, help='Record actions')
+def main(demo_dir, record_act):
+    ObsRecorder(demo_dir, record_act)
 
 class ObsRecorder:
-    def __init__(self, demo_dir: str = "/data/demo"):
+    def __init__(self, demo_dir: str = "/data/demo", record_act=True):
         # demo recording
         rospy.init_node("obs_recorder", anonymous=True)
         # rospy.loginfo("obs_recorder node started")
@@ -83,6 +84,17 @@ class ObsRecorder:
         )
 
         self.recording_pub = rospy.Publisher("/record_demo/status", Bool, queue_size=1)
+        self.record_act = record_act
+        print(f"record_act: {self.record_act}")
+        if not self.record_act:
+            # dummy publisher, which just publishes the zero StampedTransform msg.
+            import threading
+            self.pub_control = rospy.Publisher("/control/command", TransformStamped, queue_size=1)
+            self.pub_gripper = rospy.Publisher("/control/gripper", Bool, queue_size=1)
+
+            self._pub_thread = threading.Thread(target=self._pub_thread_fn)
+            self._pub_thread.start()
+
         sync = message_filters.ApproximateTimeSynchronizer(
             [
                 self._sub_caminfo_wrist,
@@ -127,6 +139,29 @@ class ObsRecorder:
                     print("Removed", to_remove)
                 except:
                     print("no recordings to remove.")
+
+    def _pub_thread_fn(self):
+        rate = rospy.Rate(30)
+        while not rospy.is_shutdown():
+            rospy.loginfo_once("obs_recorder: publishing dummy control")
+            control_msg = TransformStamped()
+            control_msg.header.stamp = rospy.Time.now()
+            control_msg.header.frame_id = "world"
+            control_msg.child_frame_id = "world"
+            control_msg.transform.translation.x = 0
+            control_msg.transform.translation.y = 0
+            control_msg.transform.translation.z = 0
+            control_msg.transform.rotation.x = 0
+            control_msg.transform.rotation.y = 0
+            control_msg.transform.rotation.z = 0
+            control_msg.transform.rotation.w = 1
+
+            gripper_msg = Bool()
+            gripper_msg.data = False
+
+            self.pub_control.publish(control_msg)
+            self.pub_gripper.publish(gripper_msg)
+            rate.sleep()
 
     def _demo_recording_callback(
         self,
