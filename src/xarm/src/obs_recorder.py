@@ -28,9 +28,7 @@ def main(demo_dir, record_act):
 
 class ObsRecorder:
     def __init__(self, demo_dir: str = "/data/demo", record_act=True):
-        # demo recording
         rospy.init_node("obs_recorder", anonymous=True)
-        # rospy.loginfo("obs_recorder node started")
 
         # check if the demo_dir exists. if not, create it
         self._demo_dir = Path(demo_dir)
@@ -85,9 +83,8 @@ class ObsRecorder:
 
         self.recording_pub = rospy.Publisher("/record_demo/status", Bool, queue_size=1)
         self.record_act = record_act
-        print(f"record_act: {self.record_act}")
+
         if not self.record_act:
-            # dummy publisher, which just publishes the zero StampedTransform msg.
             import threading
             self.pub_control = rospy.Publisher("/control/command", TransformStamped, queue_size=1)
             self.pub_gripper = rospy.Publisher("/control/gripper", Bool, queue_size=1)
@@ -114,12 +111,10 @@ class ObsRecorder:
         sync.registerCallback(self._demo_recording_callback)
         rospy.loginfo("obs_recorder: node started")
 
-        # create a log of demos. this is a text file "log.txt."
         log_file = self._demo_dir / "log.txt"
         if not log_file.exists():
             log_file.touch()
         log_msg = input("describe the demo set being collected. this will be written to the log file.\n")
-        # prepend the log_msg with the current time
         log_msg = str(datetime.datetime.now()) + " " + log_msg
         with open(log_file, "a") as f:
             f.write(log_msg + "\n")
@@ -129,11 +124,9 @@ class ObsRecorder:
             if inp == "d":
                 try:
                     demo_dirs = sorted(os.listdir(self._demo_dir))
-                    # remove anything that does not look like a datetime
                     demo_dirs = [d for d in demo_dirs if d not in ["log.txt", "_conv"]]
                     to_remove = self._demo_dir / demo_dirs[-1]
 
-                    # remove to_remove, and all files in it
                     import shutil
                     shutil.rmtree(to_remove, ignore_errors=True)
                     print("Removed", to_remove)

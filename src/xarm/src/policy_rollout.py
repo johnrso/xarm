@@ -66,7 +66,6 @@ class Agent:
 
         self.scale_factor = scale_factor
 
-        # TODO: fix later,
         self.safe = safe
 
         print(f"safe mode is {self.safe}")
@@ -410,7 +409,6 @@ class Agent:
 
     def save_vid(self):
         log_dict = {}
-        # save self.vid to wandb. it is a list of images
         if len(self.actions) > 30:
             fig, axs = plt.subplots(2, 4, figsize=(20, 10))
             actions = np.array(self.actions)
@@ -420,7 +418,6 @@ class Agent:
                 axs[d1, d2].plot(actions[:, d])
                 axs[d1, d2].set_title(f"action {d}")
 
-            # get this as an np array
             fig.canvas.draw()
             traj_img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
             traj_img = traj_img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
@@ -450,7 +447,6 @@ class Agent:
 
         self.succ = None
         log_dict["video"] = wandb.Video(vid, fps=30, format="mp4")
-        # log the depth as an np array
         np.save(f"{wandb.run.dir}/depth_{self.num_iter}.npy", depth_vid)
 
         log_dict["success"] = success
@@ -511,8 +507,6 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, safe=False, traj=None, t
     policy = Policy.build_policy(encoder.out_shape,
                                  train_config.policy,
                                  train_config.encoder).to(device).eval()  # Updated shape
-    if policy.num_bins != -1:
-        policy.load_kmeans_cluster(task=train_config.task, k=policy.num_bins)
 
     policy.load_state_dict(torch.load(pol_ckpt))
     encoder.load_state_dict(torch.load(enc_ckpt))
@@ -564,6 +558,7 @@ def main(train_config, conv_config, pol_ckpt, enc_ckpt, safe=False, traj=None, t
             pass
 
     succ = []
+
     record_pub = rospy.Publisher("/record_demo", Bool, queue_size=1)
     while True:
         obs = agent.reset()
@@ -616,4 +611,5 @@ if __name__ == "__main__":
     parser.add_argument("--tag", type=str, default=None)
     parser.add_argument("--safe", action="store_true")
     args = parser.parse_args()
+
     main(**vars(args))

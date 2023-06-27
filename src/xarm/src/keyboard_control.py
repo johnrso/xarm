@@ -156,7 +156,7 @@ class KeyboardControl:
 
             self.mouse_state_arr = self._alpha * self.next_mouse_state_arr + (1 - self._alpha) * self.mouse_state_arr
             # Suppress small values on other dimensions when control is high in one dimension
-            
+
             if np.max(np.abs(self.mouse_state_arr)) > 0.1:
                 self.mouse_state_arr[np.abs(self.mouse_state_arr) < 0.05] = 0
             # Add noise to the mouse state
@@ -245,26 +245,8 @@ class KeyboardControl:
 
         self._robot.reset_pose()
         self._ri.angle_vector(self._robot.angle_vector(), time=4)
-        self._ri.wait_interpolation() # suitable angle vector to allow nicer random initializations
-
-        # T_ee_link_0 = (self._robot.rarm.end_coords.worldcoords().T())
-
-        # reset_pos = T_ee_link_0[:3, 3] + np.random.uniform(low = [0.0, -0.05, -0.1], high = [0.1, 0.05, -0.0])
-
-        # reset_angle, reset_axis, _ = ttf.rotation_from_matrix(T_ee_link_0)
-        # reset_angle += np.random.uniform(low = -np.pi/12, high = np.pi/12)
-        # reset_axis += np.random.uniform(low = -0.005, high = 0.005, size=3)
-        # reset_rot = ttf.rotation_matrix(reset_angle, reset_axis)[:3, :3]
-
-        # self.move_to_pose(reset_pos, reset_rot, wait_interp=True, time=1)
-
+        self._ri.wait_interpolation()
         self.delta_button = 0
-
-        # if self._gripper_state == "open":
-        #     self._ri.grasp()
-        #     rospy.sleep(1)
-        #     self._gripper_state = "closed"
-
 
     def read_spacemouse(self):
         while 1:
@@ -277,7 +259,7 @@ class KeyboardControl:
             ms = pyspacemouse.read()
             self.next_mouse_state = ms
             self.next_mouse_state_arr = np.array([ms.x, ms.y, ms.z, ms.roll, ms.pitch, ms.yaw])
-            
+
             if not self.delta_button:
                 with self.state_lock:
                     self.delta_button = max(self.next_mouse_state.buttons[0] - curr_button, 0)

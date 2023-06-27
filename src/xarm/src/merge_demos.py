@@ -2,7 +2,7 @@ import click
 import os
 import shutil
 import multiprocessing as mp
-# make a click function that takes in a list of folders. it then merges the files inside without overwriting. to do this, rename each file to traj_x, where x increments by 1 each time.
+
 @click.command()
 @click.argument('folders', nargs=-1)
 @click.option('--output', '-o', default='merged', help='Name of output folder')
@@ -21,7 +21,6 @@ def merge(folders, output, num_per_folder):
             if j == num_per_folder:
                 break
             if file.endswith(".h5"):
-                # copy the file to the output folder
                 old_fn = os.path.join(folder, file)
                 new_fn = os.path.join(token_folder, f'traj_{i}.h5')
                 args.append((old_fn, new_fn))

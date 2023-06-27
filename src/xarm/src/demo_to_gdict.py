@@ -1,23 +1,3 @@
-# observations needed:
-# 'obs':
-    # CHW 'rgb', CHW 'depth', 4x4 'camera_poses', 'state': stack of EE poses, 'K_matrices'': stack of K matrices.
-# 'actions':
-    # Record delta pose of EE.
-# 'dones':
-    # Just spam a bunch of falses, then a true.
-# 'episode_dones':
-    # Just spam a bunch of falses, then a true.
-
-
-# Pickle to GDict mappings:
-# 'rgb': 'rgb'
-# 'depth': 'depth'
-# 'camera_poses': 'T_camera_in_link0'
-# 'state': 'p_ee_in_link0'
-# 'K_matrices': 'K'
-# 'actions': just take state and do subtractions??
-# 'dones' and 'episode_dones' are arbitrary
-
 import glob
 import os
 import pickle
@@ -39,7 +19,6 @@ import mediapy as mp
 import matplotlib.pyplot as plt
 
 from simple_bc.utils.visualization_utils import make_grid_video_from_numpy
-from multiprocessing import Pool
 
 def get_act_bounds(source_dir, i, ee_control=False, rotation_mode='quat'):
     pkls = natsorted(glob.glob(os.path.join(source_dir, '**/*.pkl'), recursive=True), reverse=True)
@@ -61,7 +40,7 @@ def get_act_bounds(source_dir, i, ee_control=False, rotation_mode='quat'):
         except:
             print(f"Skipping {pkl} because it is corrupted.")
             return None
-            
+
         view = "wrist" # TODO: support more views eventually
 
         rgb = demo.pop(f'rgb_{view}').transpose([2, 0, 1]) * 1.0
@@ -150,7 +129,7 @@ def convert_single_demo(source_dir,
         except:
             print(f"Skipping {pkl} because it is corrupted.")
             return 0
-        
+
         rgb_wrist = demo.pop(f'rgb_{view}').transpose([2, 0, 1]) * 1.0
         depth_wrist = demo.pop(f'depth_{view}')
         rgb_base = demo.pop(f'rgb_base').transpose([2, 0, 1]) * 1.0
@@ -446,7 +425,7 @@ def main(cfg):
 
         if not os.path.isdir(out_dir):
             os.mkdir(out_dir)
-        
+
         ret = convert_single_demo(subdirs[i],
                             i,
                             out_dir,
@@ -458,7 +437,7 @@ def main(cfg):
                             scale_factor,
                             cfg.cleanup_gripper,
                             cfg.rotation_mode)
-    
+
         if ret != 0:
             all_rgbs.append(ret[0])
             all_depths.append(ret[1])

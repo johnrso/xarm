@@ -1,3 +1,6 @@
 [submodule "src/xarm_ros"]
 	path = src/xarm_ros
 	url = git@github.com:xArm-Developer/xarm_ros.git
+[submodule "src/scikit-robot"]
+	path = src/scikit-robot
+	url = git@github.com:johnrso/scikit-robot.git
